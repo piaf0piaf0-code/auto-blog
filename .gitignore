@@ -1,0 +1,25 @@
+# 비밀키·환경변수
+.env
+.env.*
+!.env.example
+
+# 검수 대기 초안 (개인 데이터)
+drafts/
+outputs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# 데이터/캐시
+*.sqlite
+*.db
+data/cache/
+
+# OS
+.DS_Store
+Thumbs.db
