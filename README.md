@@ -31,6 +31,18 @@ python -m src.run_pipeline brief --keyword "전세자금대출 조건"
 python -m src.run_pipeline publish --file drafts/전세자금대출-조건.md --site finwiz
 ```
 
+사이트가 느릴 때:
+
+```bash
+# 속도 진단: TTFB(서버 응답)·캐시 적용 여부·활성 플러그인·쌓인 초안 개수
+python -m src.run_pipeline speed              # 전체 사이트
+python -m src.run_pipeline speed --site seaga # 한 곳만
+
+# 자동 발행으로 쌓인 오래된 초안 정리 (기본 dry-run, 실제 실행은 --apply)
+python -m src.run_pipeline clean-drafts --site seaga --days 30
+python -m src.run_pipeline clean-drafts --site seaga --days 30 --apply
+```
+
 자세한 설명은 `docs/` 폴더를 순서대로 읽는다.
 
 ---
@@ -58,6 +70,7 @@ auto-blog/
 │   ├── keyword_planner.py # Claude 기반 키워드 기회 발굴
 │   ├── content_brief.py   # 검색의도 기반 콘텐츠 초안 생성
 │   ├── wordpress_publisher.py # 워드프레스 REST API 발행
+│   ├── wp_speedcheck.py   # 사이트 속도 진단 + 오래된 초안 정리
 │   └── run_pipeline.py    # CLI 진입점
 ├── drafts/                # 생성된 초안 (검수 대기) — git 미추적
 ├── requirements.txt

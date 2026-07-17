@@ -75,6 +75,48 @@ def cmd_publish(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_speed(args: argparse.Namespace) -> int:
+    from . import wp_speedcheck
+
+    keys = [args.site] if args.site else [
+        k for k, s in config.SITES.items() if s.url
+    ]
+    if not keys:
+        print("URL이 설정된 사이트가 없습니다. .env 를 확인하세요.", file=sys.stderr)
+        return 1
+
+    for key in keys:
+        site = config.get_site(key)
+        print(f"[속도 진단] {site.name} 측정 중...\n")
+        print(wp_speedcheck.format_diagnosis(wp_speedcheck.diagnose(site)))
+        print()
+    print("처방 우선순위: ① PHP 8.1+ ② 페이지 캐시 ③ 초안/DB 정리 ④ 플러그인 정리")
+    return 0
+
+
+def cmd_clean_drafts(args: argparse.Namespace) -> int:
+    from . import wp_speedcheck
+
+    site = config.get_site(args.site)
+    if not site.configured:
+        print(f"사이트 '{site.key}'의 .env 인증 설정이 없습니다.", file=sys.stderr)
+        return 1
+
+    mode = "휴지통 이동 실행" if args.apply else "dry-run (대상 확인만)"
+    print(f"[초안 정리] {site.name}: 수정된 지 {args.days}일 지난 초안 → {mode}\n")
+    count, logs = wp_speedcheck.trash_drafts(site, days=args.days, apply=args.apply)
+    for line in logs:
+        print(line)
+    if count == 0:
+        print("대상 초안이 없습니다.")
+    elif not args.apply:
+        print(f"\n총 {count}개. 실제로 휴지통에 보내려면 --apply 를 붙이세요.")
+    else:
+        print(f"\n총 {count}개 처리. 워드프레스 휴지통에서 복구 가능하며,")
+        print("휴지통은 관리자에서 비우거나 30일 후 자동 삭제됩니다.")
+    return 0
+
+
 def cmd_sites(_: argparse.Namespace) -> int:
     print("등록된 워드프레스 사이트:\n")
     for key, site in config.SITES.items():
@@ -108,6 +150,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="공개(publish) 상태로 발행. 기본은 draft(비공개).",
     )
     pp.set_defaults(func=cmd_publish)
+
+    pd = sub.add_parser("speed", help="사이트 속도 진단 (TTFB·캐시·플러그인·초안 개수)")
+    pd.add_argument("--site", help="사이트 키. 생략하면 URL이 설정된 전체 사이트")
+    pd.set_defaults(func=cmd_speed)
+
+    pc = sub.add_parser("clean-drafts", help="오래된 초안을 휴지통으로 정리")
+    pc.add_argument("--site", required=True, help="대상 사이트 키")
+    pc.add_argument("--days", type=int, default=30, help="이 일수보다 오래된 초안만 (기본 30)")
+    pc.add_argument("--apply", action="store_true", help="실제 실행. 기본은 dry-run")
+    pc.set_defaults(func=cmd_clean_drafts)
 
     ps = sub.add_parser("sites", help="등록된 사이트 목록")
     ps.set_defaults(func=cmd_sites)
