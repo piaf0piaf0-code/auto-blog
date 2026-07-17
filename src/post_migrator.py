@@ -181,20 +181,39 @@ _SYSTEM = """당신은 한국어 SEO 콘텐츠 전문가이자 편집자다.
 - 이것은 '검수용 초안'이다. 사람이 fact_check_items 를 확인한 뒤 공개한다."""
 
 
+# --distinct 모드: A 원본을 공개 유지하는 시나리오. 중복·카니벌라이제이션을
+# 피하도록 "같은 주제, 다른 글"을 쓰게 한다.
+_DISTINCT_RULES = """
+추가 규칙 (원본 글은 다른 사이트에 계속 공개 상태로 남는다):
+- 원본과 '실질적으로 다른 글'을 써야 한다. 원본 문장을 재사용하거나
+  단순히 바꿔 쓰지(패러프레이즈) 말 것. 원본은 배경 자료로만 참고한다.
+- 원본과 다른 검색 의도·각도를 잡는다 (예: 원본이 '조건 정리'면 새 글은
+  '신청 절차·실수 사례·비교 선택 가이드' 등). 제목·소제목 구조도 다르게.
+- 원본이 노리던 키워드와 정확히 같은 키워드를 정면으로 노리지 말고,
+  같은 주제의 다른 롱테일 변형을 노린다 (포커스 키워드가 주어지면 그것을 따른다).
+- 두 글이 검색결과에서 서로 경쟁하지 않고 공존하는 것이 목표다."""
+
+
 def upgrade_post(
     old_title: str,
     old_html: str,
     target_site: Site,
     focus_keyword: str | None = None,
+    distinct: bool = False,
 ) -> UpgradedPost:
     client = anthropic.Anthropic(api_key=config.require_api_key())
     today = _dt.date.today()
 
     focus = f'\n- 새 글이 노려야 할 포커스 키워드: "{focus_keyword}"' if focus_keyword else ""
+    task = (
+        "위 규칙대로, 원본과 같은 주제를 다루되 공존 가능한 '별개의 새 글'을 만들어라."
+        if distinct
+        else "위 규칙대로 업그레이드 버전을 만들어라."
+    )
     prompt = (
         f"오늘 날짜: {today.isoformat()} ({today.year}년)\n"
         f"이관 대상 사이트 분야: {target_site.niche}{focus}\n\n"
-        f"아래는 과거에 발행된 원본 글이다. 위 규칙대로 업그레이드 버전을 만들어라.\n\n"
+        f"아래는 과거에 발행된 원본 글이다. {task}\n\n"
         f"[원본 제목]\n{old_title}\n\n"
         f"[원본 본문 HTML]\n{old_html[:60000]}"
     )
@@ -203,7 +222,7 @@ def upgrade_post(
         model=config.MODEL,
         max_tokens=32000,
         thinking={"type": "adaptive"},
-        system=_SYSTEM,
+        system=_SYSTEM + (_DISTINCT_RULES if distinct else ""),
         messages=[{"role": "user", "content": prompt}],
         output_format=UpgradedPost,
     )
@@ -345,6 +364,7 @@ def migrate(
     status: str = "draft",
     skip_image: bool = False,
     do_retire_source: bool = False,
+    distinct: bool = False,
     log=print,
 ) -> dict:
     """A 글 하나를 업그레이드해 B 에 발행한다. 결과 요약 dict 반환."""
@@ -359,9 +379,10 @@ def migrate(
     clean_html, removed = strip_adsense(old["content"])
     log(f"      광고 블록 {removed}개 제거")
 
-    log(f"[3/6] Claude 업그레이드 중 (모델={config.MODEL}, 수십 초 소요)")
+    mode = "별개 새 글(--distinct, A 공개 유지 가능)" if distinct else "업그레이드 이관"
+    log(f"[3/6] Claude {mode} 작성 중 (모델={config.MODEL}, 수십 초 소요)")
     upgraded = upgrade_post(old["title"], clean_html, target,
-                            focus_keyword=focus_keyword)
+                            focus_keyword=focus_keyword, distinct=distinct)
     log(f"      새 제목: {upgraded.new_title}")
 
     log("[4/6] B 애드센스 삽입 중")
@@ -435,4 +456,5 @@ def migrate(
         "edit_link": f"{target.url.rstrip('/')}/wp-admin/post.php"
                      f"?post={new_post.get('id')}&action=edit",
         "source_retired": do_retire_source,
+        "distinct": distinct,
     }

@@ -114,6 +114,7 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         status=status,
         skip_image=args.skip_image,
         do_retire_source=args.retire_source,
+        distinct=args.distinct,
     )
 
     up = result["upgraded"]
@@ -142,9 +143,12 @@ def cmd_migrate(args: argparse.Namespace) -> int:
             print(f"  [ ] {item}")
 
     print("\n남은 일:")
-    if not result["source_retired"]:
+    if result.get("distinct"):
+        print("  - --distinct 모드: A 원본은 공개 유지 가능. 단, 두 글의 제목·"
+              "소제목·노리는 키워드가 충분히 다른지 눈으로 확인할 것")
+    elif not result["source_retired"]:
         print("  - 중복 콘텐츠 방지: A 원본을 비공개하거나 A→B 301 리다이렉트 설정"
-              " (다음부터는 --retire-source 옵션 사용 가능)")
+              " (A를 유지하려면 --distinct 로 별개 글을 만들 것)")
     print(f"  - {target.name} 루트에 ads.txt 가 B 게시자 ID 로 등록돼 있는지 확인")
     print("  - 미리보기에서 광고 위치·썸네일·표 렌더링 확인 후 공개")
     return 0
@@ -204,6 +208,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="썸네일 제작·업로드 생략")
     pm.add_argument("--retire-source", action="store_true",
                     help="이관 후 A 원본 글을 비공개(draft)로 전환")
+    pm.add_argument("--distinct", action="store_true",
+                    help="A 원본을 공개 유지할 수 있게, 같은 주제의 '별개 새 글'로 "
+                         "작성 (다른 검색 의도·키워드·구조, 원본 문장 재사용 금지)")
     pm.set_defaults(func=cmd_migrate)
 
     ps = sub.add_parser("sites", help="등록된 사이트 목록")
