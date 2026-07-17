@@ -35,6 +35,45 @@ python -m src.run_pipeline publish --file drafts/전세자금대출-조건.md --
 
 ---
 
+## 글 이관: A 사이트 글 → B 사이트 업그레이드 발행
+
+A 워드프레스의 옛 글을 가져와 **현재 검색 트렌드 기준으로 업그레이드**한 뒤
+B 워드프레스에 발행한다. 한 명령으로 다음이 자동 처리된다:
+
+1. A 에서 글 가져오기 (REST API)
+2. A 본문의 수동 애드센스 코드 **전부 제거**
+3. Claude 가 오늘 날짜 기준으로 본문 갱신 + **클릭 유도형 새 제목**·메타설명·슬러그 생성
+4. 본문 3곳(도입 직후/중간/결론 앞)에 **B 도메인 애드센스 코드 삽입**
+5. **썸네일 이미지 자동 제작** → B 미디어 업로드 → 대표이미지 지정
+6. B 에 draft(비공개)로 발행 → 검수 후 공개
+
+```bash
+# 0. .env 에 A/B 사이트 인증 + B 애드센스 등록 (.env.example 참고)
+#    WP_A_URL / WP_A_USER / WP_A_APP_PASSWORD
+#    WP_B_URL / WP_B_USER / WP_B_APP_PASSWORD
+#    ADSENSE_B_CLIENT=ca-pub-...   ADSENSE_B_SLOTS=슬롯1,슬롯2,슬롯3
+
+# 1. A 사이트 글 목록에서 이관할 글 고르기
+python -m src.run_pipeline migrate --from-site a --to-site b --list 20
+
+# 2. 이관 실행 (기본: B에 비공개 draft로 올라감)
+python -m src.run_pipeline migrate --from-site a --to-site b --post-id 123
+
+# URL로 지정하거나, 포커스 키워드를 주거나, 이관 후 A 원본을 비공개할 수도 있다
+python -m src.run_pipeline migrate --from-site a --to-site b \
+  --post-url "https://old-site.com/옛글-주소" \
+  --keyword "2026 ○○ 신청 방법" \
+  --retire-source
+```
+
+이관 후 체크리스트 (명령이 끝나면 자동으로 다시 알려준다):
+
+- **중복 콘텐츠 방지**: A 원본을 비공개(`--retire-source`)하거나 A→B 301 리다이렉트
+- B 도메인 루트의 `ads.txt` 에 B 게시자 ID가 등록돼 있는지 확인
+- 모델이 표시한 "확인 필요 항목"(숫자·제도·날짜)을 1차 출처로 검증한 뒤 공개
+
+---
+
 ## 문서 읽는 순서
 
 | 순서 | 파일 | 내용 |

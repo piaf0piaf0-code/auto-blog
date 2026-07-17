@@ -3,3 +3,4 @@ requests>=2.32.0
 python-dotenv>=1.0.1
 pydantic>=2.7.0
 Markdown>=3.6
+Pillow>=10.0

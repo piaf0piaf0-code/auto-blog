@@ -44,6 +44,22 @@ class Site:
     def configured(self) -> bool:
         return all([self.url, self.user, self.app_password])
 
+    # ── 애드센스 (사이트 도메인별로 발급받은 코드) ──
+    @property
+    def adsense_client(self) -> str | None:
+        """게시자 ID (ca-pub-XXXXXXXXXXXXXXXX)."""
+        return os.getenv(f"ADSENSE_{self.env_prefix}_CLIENT")
+
+    @property
+    def adsense_slots(self) -> list[str]:
+        """광고 단위 슬롯 ID 목록 (쉼표 구분). 본문 광고 위치에 순서대로 배치."""
+        raw = os.getenv(f"ADSENSE_{self.env_prefix}_SLOTS", "")
+        return [s.strip() for s in raw.split(",") if s.strip()]
+
+    @property
+    def adsense_configured(self) -> bool:
+        return bool(self.adsense_client and self.adsense_slots)
+
 
 # 자동 발행이 가능한 워드프레스 사이트들.
 # 티스토리(finwiz 등)·네이버는 REST 발행이 안 되므로 여기 넣지 않는다
@@ -71,10 +87,21 @@ SITES: dict[str, Site] = {
 
 
 def get_site(key: str) -> Site:
-    if key not in SITES:
-        available = ", ".join(SITES)
-        raise KeyError(f"알 수 없는 사이트 '{key}'. 사용 가능: {available}")
-    return SITES[key]
+    if key in SITES:
+        return SITES[key]
+
+    # SITES 에 없어도 .env 에 WP_<KEY>_URL 이 있으면 즉석 등록으로 취급한다.
+    # 예) WP_A_URL / WP_B_URL 만 채우고 --from-site a --to-site b 로 사용.
+    prefix = key.upper()
+    if os.getenv(f"WP_{prefix}_URL"):
+        return Site(key=key, name=os.getenv(f"WP_{prefix}_URL", key),
+                    niche="(미지정)", env_prefix=prefix)
+
+    available = ", ".join(SITES)
+    raise KeyError(
+        f"알 수 없는 사이트 '{key}'. 사용 가능: {available} "
+        f"(또는 .env 에 WP_{prefix}_URL/_USER/_APP_PASSWORD 를 추가)"
+    )
 
 
 def require_api_key() -> str:
