@@ -31,6 +31,24 @@ python -m src.run_pipeline brief --keyword "전세자금대출 조건"
 python -m src.run_pipeline publish --file drafts/전세자금대출-조건.md --site finwiz
 ```
 
+### 유튜브 숏츠 소재 뽑기
+
+```bash
+# ffmpeg 가 필요하다 (brew install ffmpeg / sudo apt install ffmpeg)
+
+# 영상 정보·챕터 확인 (다운로드 없음)
+python -m src.run_pipeline clip --url "https://youtu.be/XXXXXXXXXXX" --info
+
+# 1:30 ~ 2:10 구간만 추출 → outputs/clips/
+python -m src.run_pipeline clip --url "https://youtu.be/XXXXXXXXXXX" --start 1:30 --end 2:10
+
+# 한 영상에서 여러 클립 (원본은 한 번만 내려받는다)
+python -m src.run_pipeline clip --url "https://youtu.be/XXXXXXXXXXX" \
+  --range 1:30-2:10 --range 5:00-5:45
+```
+
+자세한 내용: [docs/09-유튜브-숏츠-소재-추출.md](docs/09-유튜브-숏츠-소재-추출.md)
+
 자세한 설명은 `docs/` 폴더를 순서대로 읽는다.
 
 ---
@@ -44,6 +62,7 @@ python -m src.run_pipeline publish --file drafts/전세자금대출-조건.md --
 | 3 | [docs/03-키워드-선정-가이드.md](docs/03-키워드-선정-가이드.md) | 고단가·저경쟁 키워드 찾는 법 |
 | 4 | [docs/04-콘텐츠-품질-체크리스트.md](docs/04-콘텐츠-품질-체크리스트.md) | 페널티 피하면서 자동화하는 기준 |
 | 5 | [docs/05-자동화-아키텍처.md](docs/05-자동화-아키텍처.md) | make.com + Claude + 워드프레스 설계 |
+| 6 | [docs/09-유튜브-숏츠-소재-추출.md](docs/09-유튜브-숏츠-소재-추출.md) | 유튜브 링크 → 원하는 구간 추출 (숏츠 1단계) |
 
 ---
 
@@ -58,8 +77,11 @@ auto-blog/
 │   ├── keyword_planner.py # Claude 기반 키워드 기회 발굴
 │   ├── content_brief.py   # 검색의도 기반 콘텐츠 초안 생성
 │   ├── wordpress_publisher.py # 워드프레스 REST API 발행
+│   ├── youtube_clipper.py # 유튜브 구간 추출 (숏츠 소재)
 │   └── run_pipeline.py    # CLI 진입점
+├── tests/                 # 단위 테스트 (python -m unittest discover -s tests)
 ├── drafts/                # 생성된 초안 (검수 대기) — git 미추적
+├── outputs/               # 추출한 클립·원본 — git 미추적
 ├── requirements.txt
 └── .env.example
 ```

@@ -3,3 +3,7 @@ requests>=2.32.0
 python-dotenv>=1.0.1
 pydantic>=2.7.0
 Markdown>=3.6
+
+# 유튜브 숏츠 소재 추출 (src/youtube_clipper.py)
+# ffmpeg 는 pip 로 설치되지 않는다. 시스템에 따로 설치할 것.
+yt-dlp>=2025.1.1
