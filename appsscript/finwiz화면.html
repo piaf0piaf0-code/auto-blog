@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<style>
+  body { font-family: -apple-system, "Malgun Gothic", sans-serif;
+         font-size: 13px; line-height: 1.6; padding: 8px; margin: 0; }
+  h3 { font-size: 14px; margin: 18px 0 6px; }
+  .글감 { border: 1px solid #d0d0d0; border-radius: 8px; padding: 9px 11px;
+          margin-bottom: 6px; cursor: pointer; background: #fff; }
+  .글감:hover { border-color: #1a73e8; background: #f5f9ff; }
+  .작은글씨 { font-size: 11px; color: #666; }
+  .키워드 { font-weight: 600; margin-top: 2px; }
+  .링크뱃지 { display: inline-block; font-size: 11px; padding: 1px 6px;
+              border-radius: 10px; background: #e8f0fe; color: #1a56c4; margin-top: 4px; }
+  .링크없음 { background: #fdf0e6; color: #a35400; }
+  textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 11px;
+             padding: 8px; border: 1px solid #ccc; border-radius: 6px;
+             box-sizing: border-box; resize: vertical; }
+  button { font-size: 13px; padding: 8px 14px; border-radius: 6px;
+           border: 1px solid #ccc; background: #fff; cursor: pointer; }
+  button.주 { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+  button:disabled { opacity: .5; cursor: default; }
+  .줄 { display: flex; gap: 8px; align-items: center; margin: 10px 0; }
+  .오류 { border: 1px solid #d93025; border-radius: 8px; padding: 10px 12px;
+          margin: 12px 0; background: #fff5f5; }
+  .오류 b { color: #d93025; }
+  .오류 ul { margin: 6px 0 0; padding-left: 18px; }
+  .성공 { border: 1px solid #188038; border-radius: 8px; padding: 10px 12px;
+          margin: 12px 0; background: #f2fbf5; }
+  .성공 b { color: #188038; }
+  .안내 { color: #666; font-size: 12px; }
+  .뒤로 { color: #1a73e8; cursor: pointer; font-size: 12px;
+          display: inline-block; padding: 6px 0; }
+  .링크상자 { border: 1px solid #dbe6f7; background: #f7faff; border-radius: 8px;
+              padding: 8px 11px; margin: 10px 0; font-size: 12px; }
+  .링크상자 ul { margin: 4px 0 0; padding-left: 18px; }
+  .링크상자 a { color: #1a56c4; }
+
+  @media (min-width: 500px) {
+    body { font-size: 15px; max-width: 760px; margin: 0 auto; padding: 16px; }
+    h3 { font-size: 17px; }
+    button { font-size: 15px; padding: 12px 18px; }
+    .글감 { padding: 14px 16px; }
+    .키워드 { font-size: 16px; }
+    textarea { font-size: 13px; }
+    .안내, .링크상자 { font-size: 13px; }
+  }
+  @media (pointer: coarse) {
+    textarea { font-size: 16px; }
+    button { min-height: 44px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="목록화면">
+  <div class="안내" id="목록안내">불러오는 중입니다...</div>
+  <div id="글감들"></div>
+</div>
+
+<div id="작성화면" style="display:none">
+  <div class="뒤로" onclick="목록으로()">← 목록으로</div>
+  <h3 id="제목"></h3>
+  <div class="작은글씨" id="부제"></div>
+
+  <div id="알림"></div>
+  <div id="링크미리보기"></div>
+
+  <h3>1단계 · My GPT 에 넣을 요청문</h3>
+  <div class="줄">
+    <button class="주" onclick="복사하고열기(this)">📋 복사하고 My GPT 열기</button>
+  </div>
+  <div class="안내" style="margin:-4px 0 8px" id="붙여넣기안내">
+    새 탭이 열리면 대화창에 <b>Ctrl+V</b> 로 붙여넣고 Enter 를 누르세요.
+  </div>
+  <div class="줄">
+    <button onclick="요청문복사(this)">복사만 하기</button>
+  </div>
+  <textarea id="요청문" rows="6" readonly></textarea>
+
+  <h3>2단계 · 받은 글 붙여넣기</h3>
+  <textarea id="답변" rows="12"
+    placeholder="받은 글을 처음부터 끝까지 전부 복사해서 여기에 붙여넣으세요."></textarea>
+  <div class="줄">
+    <button class="주" id="저장버튼" onclick="저장()">확인하고 저장</button>
+    <span class="안내">오늘작성 탭에 발행대기로 들어갑니다</span>
+  </div>
+</div>
+
+<script>
+var 지금순번 = null;
+var GPT주소 = '';
+
+var 손가락 = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+if (손가락) {
+  var 안내칸 = document.getElementById('붙여넣기안내');
+  if (안내칸) 안내칸.innerHTML = '새 탭이 열리면 대화창을 <b>길게 눌러</b> 붙여넣기 하세요.';
+}
+
+function 목록불러오기() {
+  google.script.run
+    .withSuccessHandler(목록그리기)
+    .withFailureHandler(오류표시)
+    .finwiz다음목록();
+}
+
+function 목록그리기(결과) {
+  var 안내 = document.getElementById('목록안내');
+  var 상자 = document.getElementById('글감들');
+  상자.innerHTML = '';
+
+  if (결과.준비안됨) {
+    안내.innerHTML = '<div class="오류"><b>아직 로드맵이 없습니다.</b><br>'
+                   + 결과.안내 + '</div>';
+    return;
+  }
+
+  GPT주소 = 결과.GPT주소 || '';
+  안내.innerHTML = '전체 ' + 결과.전체 + '편 중 <b>' + 결과.끝남 + '편</b> 끝냈고 '
+                 + '<b>' + 결과.남음 + '편</b> 남았습니다. '
+                 + '지금 링크로 걸 수 있는 글은 ' + 결과.주소있음 + '개입니다.'
+                 + '<br>위에서부터 순서대로 쓰시면 됩니다.';
+
+  if (!결과.목록.length) {
+    상자.innerHTML = '<div class="안내" style="padding:10px 2px">'
+      + '남은 글이 없습니다. 로드맵을 다 쓰셨습니다.</div>';
+    return;
+  }
+
+  결과.목록.forEach(function (g) {
+    var d = document.createElement('div');
+    d.className = '글감';
+    var 뱃지 = g.링크수
+      ? '<span class="링크뱃지">🔗 넣을 링크 ' + g.링크수 + '개</span>'
+      : '<span class="링크뱃지 링크없음">아직 걸 링크 없음</span>';
+    d.innerHTML = '<div class="작은글씨">' + g.순번 + '번 · ' + g.단계
+                + ' · ' + g.클러스터
+                + (g.작성상태 && g.작성상태 !== '미작성' ? ' · ' + g.작성상태 : '')
+                + '</div>'
+                + '<div class="키워드">' + 안전(g.제목) + '</div>'
+                + '<div class="작은글씨">키워드: ' + 안전(g.메인키워드) + '</div>'
+                + 뱃지;
+    d.onclick = function () { 글열기(g); };
+    상자.appendChild(d);
+  });
+}
+
+function 안전(글자) {
+  return String(글자 == null ? '' : 글자)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function 글열기(g) {
+  지금순번 = g.순번;
+  document.getElementById('제목').textContent = g.제목;
+  document.getElementById('부제').textContent =
+    g.순번 + '번 · ' + g.단계 + ' · ' + g.클러스터 + ' · 키워드 ' + g.메인키워드;
+  document.getElementById('요청문').value = '요청문을 만드는 중입니다...';
+  document.getElementById('답변').value = '';
+  document.getElementById('알림').innerHTML = '';
+  document.getElementById('링크미리보기').innerHTML = '';
+  document.getElementById('목록화면').style.display = 'none';
+  document.getElementById('작성화면').style.display = 'block';
+
+  google.script.run
+    .withSuccessHandler(function (결과) {
+      document.getElementById('요청문').value = 결과.요청문;
+      링크그리기(결과.링크);
+    })
+    .withFailureHandler(오류표시)
+    .finwiz요청문(g.순번);
+}
+
+function 링크그리기(링크) {
+  var 칸 = document.getElementById('링크미리보기');
+  if (!링크 || !링크.length) {
+    칸.innerHTML = '<div class="링크상자">이번 글에 걸 <b>내부 링크가 아직 없습니다.</b><br>'
+      + '<span class="안내">같은 주제로 발행된 글이 생기면 다음 글부터 자동으로 붙습니다.</span></div>';
+    return;
+  }
+  var 줄 = 링크.map(function (한개) {
+    return '<li><a href="' + 안전(한개.URL) + '" target="_blank">' + 안전(한개.제목)
+         + '</a> <span class="안내">(' + 안전(한개.이유) + ')</span></li>';
+  }).join('');
+  칸.innerHTML = '<div class="링크상자"><b>이 글에 들어갈 내부 링크 ' + 링크.length + '개</b>'
+    + '<ul>' + 줄 + '</ul>'
+    + '<div class="안내" style="margin-top:5px">'
+    + '요청문에 이미 들어 있습니다. 봇이 빠뜨려도 저장할 때 자동으로 넣습니다.</div></div>';
+}
+
+function 목록으로() {
+  document.getElementById('작성화면').style.display = 'none';
+  document.getElementById('목록화면').style.display = 'block';
+  document.getElementById('목록안내').textContent = '불러오는 중입니다...';
+  목록불러오기();
+}
+
+function 요청문복사(버튼) {
+  var 칸 = document.getElementById('요청문');
+  칸.select();
+  document.execCommand('copy');
+  var 원래 = 버튼.textContent;
+  버튼.textContent = '복사했습니다';
+  setTimeout(function () { 버튼.textContent = 원래; }, 1500);
+  return true;
+}
+
+function 복사하고열기(버튼) {
+  요청문복사(버튼);
+  if (GPT주소) {
+    window.open(GPT주소, '_blank');
+  } else {
+    document.getElementById('알림').innerHTML =
+      '<div class="오류"><b>My GPT 주소가 없습니다.</b><br>'
+      + '260816글쓰기.gs 위쪽의 마이GPT주소 를 확인해 주세요.</div>';
+  }
+}
+
+function 저장() {
+  var 답변 = document.getElementById('답변').value;
+  var 버튼 = document.getElementById('저장버튼');
+  var 알림 = document.getElementById('알림');
+
+  if (!답변.trim()) {
+    알림.innerHTML = '<div class="오류"><b>붙여넣은 내용이 없습니다.</b></div>';
+    return;
+  }
+
+  버튼.disabled = true;
+  버튼.textContent = '확인하는 중...';
+  알림.innerHTML = '';
+
+  google.script.run
+    .withSuccessHandler(function (결과) {
+      버튼.disabled = false;
+      버튼.textContent = '확인하고 저장';
+      if (결과.성공) {
+        var 덧말 = '';
+        if (결과.채운링크 && 결과.채운링크.length) {
+          덧말 = '<br>봇이 빠뜨린 링크 ' + 결과.채운링크.length
+               + '개는 <b>함께 보면 좋은 글</b> 로 본문 끝에 넣었습니다.';
+        }
+        알림.innerHTML = '<div class="성공"><b>저장했습니다.</b><br>'
+          + '오늘작성 ' + 결과.행번호 + '행에 넣고 상태를 <b>' + (결과.상태 || '발행대기')
+          + '</b> 로 바꿨습니다. 내부 링크 ' + 결과.넣은링크 + '개.'
+          + 덧말 + 메모칸(결과.메모) + '</div>';
+        document.getElementById('답변').value = '';
+      } else {
+        var 목록 = 결과.문제들.map(function (p) { return '<li>' + 안전(p) + '</li>'; }).join('');
+        알림.innerHTML = '<div class="오류"><b>저장하지 않았습니다.</b> '
+          + '아래를 고쳐서 다시 붙여넣어 주세요.<ul>' + 목록 + '</ul></div>';
+      }
+    })
+    .withFailureHandler(function (e) {
+      버튼.disabled = false;
+      버튼.textContent = '확인하고 저장';
+      오류표시(e);
+    })
+    .finwiz저장(지금순번, 답변);
+}
+
+function 메모칸(메모) {
+  if (!메모 || !메모.length) return '';
+  return '<br><span class="안내">' + 메모.map(안전).join('<br>') + '</span>';
+}
+
+function 오류표시(e) {
+  var 글 = (e && e.message) ? e.message : String(e);
+  var 곳 = document.getElementById('작성화면').style.display === 'none'
+         ? '목록안내' : '알림';
+  document.getElementById(곳).innerHTML =
+    '<div class="오류"><b>문제가 생겼습니다.</b><br>' + 안전(글).replace(/\n/g, '<br>') + '</div>';
+}
+
+목록불러오기();
+</script>
+</body>
+</html>
