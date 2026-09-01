@@ -36,6 +36,18 @@
               padding: 8px 11px; margin: 10px 0; font-size: 12px; }
   .링크상자 ul { margin: 4px 0 0; padding-left: 18px; }
   .링크상자 a { color: #1a56c4; }
+  .출처상자 { border: 1px solid #e3dcc9; background: #fdfbf4; border-radius: 8px;
+              padding: 8px 11px; margin: 10px 0; font-size: 12px; }
+  .출처상자 ul { margin: 4px 0 0; padding-left: 18px; }
+  .카드상자 { border: 1px solid #f0d9b5; background: #fffaf0; border-radius: 8px;
+              padding: 10px 12px; margin: 12px 0; font-size: 12px; }
+  .경고상자 { border: 1px solid #e0a300; background: #fffbe9; border-radius: 8px;
+              padding: 10px 12px; margin: 12px 0; font-size: 12px; }
+  .경고상자 ul { margin: 6px 0 0; padding-left: 18px; }
+  .뱃지 { display: inline-block; font-size: 11px; padding: 1px 6px;
+          border-radius: 10px; margin-top: 4px; margin-right: 4px; }
+  .카드ok { background: #e6f4ea; color: #14683a; }
+  .카드없음 { background: #fdf0e6; color: #a35400; }
 
   @media (min-width: 500px) {
     body { font-size: 15px; max-width: 760px; margin: 0 auto; padding: 16px; }
@@ -59,12 +71,42 @@
   <div id="글감들"></div>
 </div>
 
+<div id="카드화면" style="display:none">
+  <div class="뒤로" onclick="목록으로()">← 목록으로</div>
+  <h3 id="카드제목"></h3>
+  <div class="안내" id="카드부제"></div>
+  <div id="카드알림"></div>
+
+  <div class="카드상자">
+    이 주제의 글은 <b id="카드글수"></b>편입니다. 글마다 숫자를 다시 찾으면
+    글끼리 숫자가 어긋납니다. <b>지금 한 번만</b> 공식 페이지에서 확인해 두면
+    이 주제의 글 전부가 같은 숫자를 씁니다. 값이 바뀌면 시트에서 칸 하나만 고치면 됩니다.
+  </div>
+
+  <h3>1단계 · 확인 요청문</h3>
+  <div class="줄">
+    <button class="주" onclick="카드복사하고열기(this)">📋 복사하고 My GPT 열기</button>
+    <button onclick="카드요청문복사(this)">복사만 하기</button>
+  </div>
+  <textarea id="카드요청문" rows="8" readonly></textarea>
+
+  <h3>2단계 · 받은 표 붙여넣기</h3>
+  <textarea id="카드답변" rows="10"
+    placeholder="| 항목 | 값 | 기준일 | 출처 | 모양의 표를 그대로 복사해서 붙여넣으세요."></textarea>
+  <div class="줄">
+    <button class="주" id="카드저장버튼" onclick="카드저장()">사실카드 저장</button>
+    <span class="안내">finwiz_사실카드 탭에 들어갑니다</span>
+  </div>
+</div>
+
 <div id="작성화면" style="display:none">
   <div class="뒤로" onclick="목록으로()">← 목록으로</div>
   <h3 id="제목"></h3>
   <div class="작은글씨" id="부제"></div>
 
   <div id="알림"></div>
+  <div id="카드알림2"></div>
+  <div id="출처미리보기"></div>
   <div id="링크미리보기"></div>
 
   <h3>1단계 · My GPT 에 넣을 요청문</h3>
@@ -90,6 +132,7 @@
 
 <script>
 var 지금순번 = null;
+var 지금클러스터 = '';
 var GPT주소 = '';
 
 var 손가락 = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
@@ -132,8 +175,11 @@ function 목록그리기(결과) {
     var d = document.createElement('div');
     d.className = '글감';
     var 뱃지 = g.링크수
-      ? '<span class="링크뱃지">🔗 넣을 링크 ' + g.링크수 + '개</span>'
-      : '<span class="링크뱃지 링크없음">아직 걸 링크 없음</span>';
+      ? '<span class="뱃지 링크뱃지">🔗 링크 ' + g.링크수 + '개</span>'
+      : '<span class="뱃지 링크뱃지 링크없음">링크 없음</span>';
+    뱃지 += g.카드있음
+      ? '<span class="뱃지 카드' + (g.카드오래됨 ? '없음">🧾 사실카드 오래됨' : 'ok">🧾 사실카드 ' + g.카드개수 + '줄') + '</span>'
+      : '<span class="뱃지 카드없음">🧾 사실카드 없음</span>';
     d.innerHTML = '<div class="작은글씨">' + g.순번 + '번 · ' + g.단계
                 + ' · ' + g.클러스터
                 + (g.작성상태 && g.작성상태 !== '미작성' ? ' · ' + g.작성상태 : '')
@@ -153,6 +199,7 @@ function 안전(글자) {
 
 function 글열기(g) {
   지금순번 = g.순번;
+  지금클러스터 = g.클러스터;
   document.getElementById('제목').textContent = g.제목;
   document.getElementById('부제').textContent =
     g.순번 + '번 · ' + g.단계 + ' · ' + g.클러스터 + ' · 키워드 ' + g.메인키워드;
@@ -160,16 +207,62 @@ function 글열기(g) {
   document.getElementById('답변').value = '';
   document.getElementById('알림').innerHTML = '';
   document.getElementById('링크미리보기').innerHTML = '';
-  document.getElementById('목록화면').style.display = 'none';
-  document.getElementById('작성화면').style.display = 'block';
+  document.getElementById('출처미리보기').innerHTML = '';
+  document.getElementById('카드알림2').innerHTML = '';
+  화면보이기('작성화면');
 
   google.script.run
     .withSuccessHandler(function (결과) {
       document.getElementById('요청문').value = 결과.요청문;
+      출처그리기(결과.출처);
+      카드알림그리기(결과.카드, 결과.클러스터);
       링크그리기(결과.링크);
     })
     .withFailureHandler(오류표시)
     .finwiz요청문(g.순번);
+}
+
+function 화면보이기(이름) {
+  ['목록화면', '작성화면', '카드화면'].forEach(function (하나) {
+    document.getElementById(하나).style.display = (하나 === 이름) ? 'block' : 'none';
+  });
+  window.scrollTo(0, 0);
+}
+
+function 출처그리기(출처) {
+  var 칸 = document.getElementById('출처미리보기');
+  if (!출처 || !출처.length) { 칸.innerHTML = ''; return; }
+  var 줄 = 출처.map(function (하나) {
+    return '<li><a href="' + 안전(하나.URL) + '" target="_blank">'
+         + 안전(하나.기관) + ' · ' + 안전(하나.주제) + '</a></li>';
+  }).join('');
+  칸.innerHTML = '<div class="출처상자"><b>봇이 열어서 확인할 공식 페이지 '
+    + 출처.length + '곳</b><ul>' + 줄 + '</ul>'
+    + '<div class="안내" style="margin-top:5px">요청문에 이미 들어 있습니다. '
+    + '받은 글의 숫자가 의심스러우면 여기를 눌러 직접 대조해 보세요.</div></div>';
+}
+
+function 카드알림그리기(카드, 클러스터) {
+  var 칸 = document.getElementById('카드알림2');
+  if (!카드) { 칸.innerHTML = ''; return; }
+  if (!카드.있음) {
+    칸.innerHTML = '<div class="카드상자"><b>🧾 이 주제의 사실카드가 아직 없습니다.</b><br>'
+      + '한도·금리 같은 숫자를 <b>지금 한 번만</b> 확인해 두면, '
+      + '이 주제의 남은 글 전부가 같은 숫자를 씁니다. 5분이면 됩니다.'
+      + '<div class="줄"><button onclick="카드만들기(\'' + 안전(클러스터) + '\')">'
+      + '🧾 사실카드 먼저 만들기</button>'
+      + '<span class="안내">건너뛰고 그냥 써도 됩니다</span></div></div>';
+    return;
+  }
+  if (카드.오래됨) {
+    칸.innerHTML = '<div class="카드상자">🧾 사실카드를 확인한 지 <b>' + 카드.지난날
+      + '일</b> 지났습니다. 요청문에 "원문에서 바뀐 게 없는지 먼저 확인하라"고 넣어 두었습니다.'
+      + '<div class="줄"><button onclick="카드만들기(\'' + 안전(클러스터) + '\')">'
+      + '🧾 사실카드 새로 만들기</button></div></div>';
+    return;
+  }
+  칸.innerHTML = '<div class="안내" style="margin:8px 0">🧾 사실카드 ' + 카드.개수
+    + '줄이 요청문에 들어갔습니다.</div>';
 }
 
 function 링크그리기(링크) {
@@ -190,14 +283,73 @@ function 링크그리기(링크) {
 }
 
 function 목록으로() {
-  document.getElementById('작성화면').style.display = 'none';
-  document.getElementById('목록화면').style.display = 'block';
+  화면보이기('목록화면');
   document.getElementById('목록안내').textContent = '불러오는 중입니다...';
   목록불러오기();
 }
 
-function 요청문복사(버튼) {
-  var 칸 = document.getElementById('요청문');
+// ── 사실카드 만들기 ─────────────────────────────────
+var 카드클러스터 = '';
+
+function 카드만들기(클러스터) {
+  카드클러스터 = 클러스터;
+  document.getElementById('카드제목').textContent = '🧾 ' + 클러스터 + ' 사실카드';
+  document.getElementById('카드부제').textContent =
+    '이 주제의 모든 글이 이 숫자를 씁니다. 한 번만 하면 됩니다.';
+  document.getElementById('카드요청문').value = '요청문을 만드는 중입니다...';
+  document.getElementById('카드답변').value = '';
+  document.getElementById('카드알림').innerHTML = '';
+  화면보이기('카드화면');
+
+  google.script.run
+    .withSuccessHandler(function (결과) {
+      document.getElementById('카드요청문').value = 결과.요청문;
+      document.getElementById('카드글수').textContent = 결과.글수;
+    })
+    .withFailureHandler(오류표시)
+    .finwiz사실카드요청문(클러스터);
+}
+
+function 카드요청문복사(버튼) { return 칸복사('카드요청문', 버튼); }
+
+function 카드복사하고열기(버튼) {
+  카드요청문복사(버튼);
+  if (GPT주소) window.open(GPT주소, '_blank');
+}
+
+function 카드저장() {
+  var 답변 = document.getElementById('카드답변').value;
+  var 버튼 = document.getElementById('카드저장버튼');
+  var 알림 = document.getElementById('카드알림');
+  if (!답변.trim()) {
+    알림.innerHTML = '<div class="오류"><b>붙여넣은 내용이 없습니다.</b></div>';
+    return;
+  }
+  버튼.disabled = true; 버튼.textContent = '저장하는 중...';
+  google.script.run
+    .withSuccessHandler(function (결과) {
+      버튼.disabled = false; 버튼.textContent = '사실카드 저장';
+      if (결과.성공) {
+        알림.innerHTML = '<div class="성공"><b>사실카드를 저장했습니다.</b><br>'
+          + 안전(결과.클러스터) + ' 주제 ' + 결과.개수 + '줄. '
+          + '이제 이 주제의 글 요청문에 이 숫자가 자동으로 들어갑니다.'
+          + '<div class="줄"><button class="주" onclick="목록으로()">← 목록으로 돌아가 글쓰기</button></div>'
+          + '</div>';
+      } else {
+        알림.innerHTML = '<div class="오류"><b>저장하지 않았습니다.</b><ul>'
+          + 결과.문제들.map(function (p) { return '<li>' + 안전(p) + '</li>'; }).join('')
+          + '</ul></div>';
+      }
+    })
+    .withFailureHandler(function (e) {
+      버튼.disabled = false; 버튼.textContent = '사실카드 저장';
+      오류표시(e);
+    })
+    .finwiz사실카드저장(카드클러스터, 답변);
+}
+
+function 칸복사(id, 버튼) {
+  var 칸 = document.getElementById(id);
   칸.select();
   document.execCommand('copy');
   var 원래 = 버튼.textContent;
@@ -205,6 +357,8 @@ function 요청문복사(버튼) {
   setTimeout(function () { 버튼.textContent = 원래; }, 1500);
   return true;
 }
+
+function 요청문복사(버튼) { return 칸복사('요청문', 버튼); }
 
 function 복사하고열기(버튼) {
   요청문복사(버튼);
@@ -241,11 +395,20 @@ function 저장() {
           덧말 = '<br>봇이 빠뜨린 링크 ' + 결과.채운링크.length
                + '개는 <b>함께 보면 좋은 글</b> 로 본문 끝에 넣었습니다.';
         }
+        var 이어서 = '';
+        if (결과.다음) {
+          이어서 = '<div class="줄"><button class="주" onclick="이어서쓰기('
+            + 결과.다음.순번 + ')">▶ 다음 ' + 결과.다음.순번 + '번 글 이어서 쓰기</button>'
+            + '<button onclick="목록으로()">목록으로</button></div>'
+            + '<div class="안내">' + 안전(결과.다음.제목) + '</div>';
+        }
         알림.innerHTML = '<div class="성공"><b>저장했습니다.</b><br>'
           + '오늘작성 ' + 결과.행번호 + '행에 넣고 상태를 <b>' + (결과.상태 || '발행대기')
           + '</b> 로 바꿨습니다. 내부 링크 ' + 결과.넣은링크 + '개.'
-          + 덧말 + 메모칸(결과.메모) + '</div>';
+          + 덧말 + 메모칸(결과.메모) + 이어서 + '</div>'
+          + 경고칸(결과.경고);
         document.getElementById('답변').value = '';
+        window.scrollTo(0, 0);
       } else {
         var 목록 = 결과.문제들.map(function (p) { return '<li>' + 안전(p) + '</li>'; }).join('');
         알림.innerHTML = '<div class="오류"><b>저장하지 않았습니다.</b> '
@@ -260,6 +423,40 @@ function 저장() {
     .finwiz저장(지금순번, 답변);
 }
 
+/** 저장은 했지만 사람이 한 번 봐야 할 것들. */
+function 경고칸(경고) {
+  if (!경고 || !경고.length) return '';
+  return '<div class="경고상자"><b>발행 전에 한 번만 봐 주세요</b><ul>'
+    + 경고.map(function (p) { return '<li>' + 안전(p) + '</li>'; }).join('')
+    + '</ul></div>';
+}
+
+/** 저장하자마자 다음 글로 넘어간다. 목록을 거치지 않는다. */
+function 이어서쓰기(순번) {
+  document.getElementById('요청문').value = '요청문을 만드는 중입니다...';
+  document.getElementById('답변').value = '';
+  document.getElementById('알림').innerHTML = '';
+  document.getElementById('링크미리보기').innerHTML = '';
+  document.getElementById('출처미리보기').innerHTML = '';
+  document.getElementById('카드알림2').innerHTML = '';
+  지금순번 = 순번;
+  window.scrollTo(0, 0);
+
+  google.script.run
+    .withSuccessHandler(function (결과) {
+      document.getElementById('제목').textContent = 결과.제목;
+      document.getElementById('부제').textContent =
+        순번 + '번 · ' + 결과.클러스터 + ' · 키워드 ' + 결과.메인키워드;
+      지금클러스터 = 결과.클러스터;
+      document.getElementById('요청문').value = 결과.요청문;
+      출처그리기(결과.출처);
+      카드알림그리기(결과.카드, 결과.클러스터);
+      링크그리기(결과.링크);
+    })
+    .withFailureHandler(오류표시)
+    .finwiz요청문(순번);
+}
+
 function 메모칸(메모) {
   if (!메모 || !메모.length) return '';
   return '<br><span class="안내">' + 메모.map(안전).join('<br>') + '</span>';
@@ -267,8 +464,9 @@ function 메모칸(메모) {
 
 function 오류표시(e) {
   var 글 = (e && e.message) ? e.message : String(e);
-  var 곳 = document.getElementById('작성화면').style.display === 'none'
-         ? '목록안내' : '알림';
+  var 곳 = '목록안내';
+  if (document.getElementById('작성화면').style.display !== 'none') 곳 = '알림';
+  else if (document.getElementById('카드화면').style.display !== 'none') 곳 = '카드알림';
   document.getElementById(곳).innerHTML =
     '<div class="오류"><b>문제가 생겼습니다.</b><br>' + 안전(글).replace(/\n/g, '<br>') + '</div>';
 }
