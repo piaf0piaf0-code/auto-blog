@@ -266,19 +266,46 @@ def parse_youtube_url(raw: str) -> VideoRef:
 
 _INSTALL_HINT = {
     "yt-dlp": "pip install -r requirements.txt  (또는 pip install -U yt-dlp)",
-    "ffmpeg": "macOS: brew install ffmpeg / Ubuntu: sudo apt install ffmpeg",
-    "ffprobe": "ffmpeg 를 설치하면 함께 들어온다.",
+    "ffmpeg": (
+        "pip install imageio-ffmpeg  (설치 불필요한 내장본)\n"
+        "     또는 Windows: winget install Gyan.FFmpeg / "
+        "macOS: brew install ffmpeg / Ubuntu: sudo apt install ffmpeg"
+    ),
 }
 
 
+def find_ffmpeg() -> str | None:
+    """ffmpeg 실행 파일 경로. 시스템에 없으면 pip 로 들어온 내장본을 쓴다.
+
+    imageio-ffmpeg 패키지가 정적 빌드 ffmpeg 를 함께 배포하므로,
+    ffmpeg 를 따로 설치하지 않은 사용자도 그대로 쓸 수 있다.
+    """
+    path = shutil.which("ffmpeg")
+    if path:
+        return path
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
+
+
 def require_tool(name: str) -> str:
-    path = shutil.which(name)
+    path = find_ffmpeg() if name == "ffmpeg" else shutil.which(name)
     if not path:
         raise ClipError(
             f"'{name}' 을(를) 찾을 수 없습니다. 설치 후 다시 실행하세요.\n"
             f"  → {_INSTALL_HINT.get(name, '')}"
         )
     return path
+
+
+def _ffmpeg_location_args() -> list[str]:
+    """yt-dlp 에 ffmpeg 위치를 알려준다(PATH 에 없을 때 필요)."""
+    if shutil.which("ffmpeg"):
+        return []
+    path = find_ffmpeg()
+    return ["--ffmpeg-location", str(Path(path).parent)] if path else []
 
 
 def _run(cmd: list[str], *, quiet: bool = False) -> subprocess.CompletedProcess:
@@ -401,6 +428,7 @@ def build_section_command(
         "-o", out_template,
         "--print-to-file", "after_move:filepath", str(print_file),
         "--no-simulate",
+        *_ffmpeg_location_args(),
         *_auth_args(cookies, cookies_from_browser),
         ref.url,
     ]
@@ -480,6 +508,7 @@ def build_source_command(
         "-o", str(Path(source_dir) / f"{ref.video_id}.%(ext)s"),
         "--print-to-file", "after_move:filepath", str(print_file),
         "--no-simulate",
+        *_ffmpeg_location_args(),
         *_auth_args(cookies, cookies_from_browser),
         ref.url,
     ]
@@ -646,10 +675,18 @@ def extract_segments(
         raise ClipError("추출할 구간이 없습니다.")
 
     ref = parse_youtube_url(url)
-    # 구간이 2개 이상이면 원본을 한 번만 받아 로컬에서 자르는 쪽이 빠르다.
-    use_source = keep_source or len(segments) > 1
 
-    source: Path | None = None
+    # 전에 받아둔 원본이 있으면 다시 내려받지 않고 그대로 자른다.
+    source: Path | None = find_cached_source(
+        ref, DEFAULT_SOURCE_DIR, audio_only=audio_only
+    )
+    if source and not dry_run:
+        print(f"  받아둔 원본 사용: {source} (다운로드 건너뜀)")
+
+    # 구간이 2개 이상이면 원본을 한 번만 받아 로컬에서 자르는 쪽이 빠르다.
+    use_source = source is None and (keep_source or len(segments) > 1)
+    downloaded_now = False   # 이번 실행에서 받은 원본만 정리 대상이다
+
     if use_source:
         if dry_run:
             source = Path(DEFAULT_SOURCE_DIR) / f"{ref.video_id}.mp4"
@@ -671,6 +708,7 @@ def extract_segments(
                 cookies=cookies,
                 cookies_from_browser=cookies_from_browser,
             )
+            downloaded_now = True
 
     results: list[Path] = []
     for i, seg in enumerate(segments, 1):
@@ -696,8 +734,10 @@ def extract_segments(
         print(f"  ✅ {path}")
         results.append(path)
 
-    if source and not keep_source and not dry_run:
+    # 전부터 있던 원본은 사용자의 자산이므로 건드리지 않는다.
+    # 이번 실행에서 받은 임시 원본만 정리한다.
+    if source and downloaded_now and not keep_source and not dry_run:
         source.unlink(missing_ok=True)
-        print(f"\n원본 캐시 삭제: {source.name} (남기려면 --keep-source)")
+        print(f"\n임시 원본 정리: {source.name} (남기려면 --keep-source)")
 
     return results

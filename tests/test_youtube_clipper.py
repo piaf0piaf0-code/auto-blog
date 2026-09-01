@@ -252,5 +252,30 @@ class TestSourceCache(unittest.TestCase):
         self.assertIsNone(yc.find_cached_source(self.ref, self.dir))
 
 
+class TestCacheIsNotDeleted(unittest.TestCase):
+    """전부터 있던 원본 캐시는 사용자 자산이므로 지우면 안 된다."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        self.cache = Path(yc.DEFAULT_SOURCE_DIR) / f"{VID}.mp4"
+
+    def test_existing_cache_survives(self):
+        self.cache.parent.mkdir(parents=True, exist_ok=True)
+        created = not self.cache.exists()
+        if created:
+            self.cache.write_bytes(b"fake")
+        try:
+            yc.extract_segments(
+                f"https://youtu.be/{VID}", [yc.Segment(10, 40)],
+                out_dir=self.dir / "clips", dry_run=True,
+            )
+            self.assertTrue(self.cache.exists(), "받아둔 원본이 삭제되면 안 된다")
+        finally:
+            if created:
+                self.cache.unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     unittest.main()

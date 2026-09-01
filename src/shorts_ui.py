@@ -1,0 +1,429 @@
+"""브라우저에서 클릭만으로 유튜브 구간을 잘라내는 로컬 웹 UI.
+
+실행:
+    Windows : 실행.bat 더블클릭
+    직접 실행: python -m src.shorts_ui
+
+동작:
+    링크 붙여넣기 → 영상이 화면에 뜬다 → 원하는 지점에서
+    [여기가 시작] / [여기가 끝] 을 누른다 → [클립 만들기].
+    타임코드를 손으로 적을 필요가 없다.
+"""
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import webbrowser
+from pathlib import Path
+
+import gradio as gr
+
+from . import youtube_clipper as yc
+
+OUT_DIR = Path("outputs/clips")
+
+# ─────────────────────────────────────────────────────────────
+# 브라우저 쪽 스크립트
+#   유튜브 IFrame Player API 로 재생 위치를 읽어 입력칸에 채워 넣는다.
+# ─────────────────────────────────────────────────────────────
+HEAD = """
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+// API 로드 완료를 기다리는 약속(Promise)
+window.__ytReady = new Promise(function (resolve) {
+  window.onYouTubeIframeAPIReady = function () { resolve(true); };
+  // 이미 로드된 경우 대비
+  if (window.YT && window.YT.Player) { resolve(true); }
+});
+
+// 초 → "M:SS.s" (입력칸에 채울 표기)
+window.__fmtTime = function (t) {
+  if (!isFinite(t) || t < 0) t = 0;
+  var m = Math.floor(t / 60);
+  var s = t - m * 60;
+  var h = Math.floor(m / 60);
+  m = m - h * 60;
+  var ss = (s < 10 ? "0" : "") + s.toFixed(1);
+  return h > 0 ? h + ":" + (m < 10 ? "0" : "") + m + ":" + ss : m + ":" + ss;
+};
+
+// Gradio 입력칸에 값을 넣고 변경을 알린다(Svelte 가 알아채도록 input 이벤트 발생)
+window.__setBox = function (boxId, text) {
+  var el = document.querySelector("#" + boxId + " textarea, #" + boxId + " input");
+  if (!el) return;
+  var proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement : HTMLInputElement;
+  var setter = Object.getOwnPropertyDescriptor(proto.prototype, "value").set;
+  setter.call(el, text);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+};
+
+// 영상 불러오기
+window.__loadPlayer = function (videoId, startAt) {
+  if (!videoId) return;
+  window.__ytReady.then(function () {
+    var host = document.getElementById("yt-player-host");
+    if (!host) return;
+    host.innerHTML = '<div id="yt-player"></div>';
+    window.__player = new YT.Player("yt-player", {
+      width: "100%",
+      height: "420",
+      videoId: videoId,
+      playerVars: { rel: 0, start: Math.floor(startAt || 0) }
+    });
+  });
+};
+
+window.__currentTime = function () {
+  if (window.__player && window.__player.getCurrentTime) {
+    return window.__player.getCurrentTime();
+  }
+  return null;
+};
+
+// [여기가 시작] / [여기가 끝]
+window.__mark = function (which) {
+  var t = window.__currentTime();
+  if (t === null) { alert("먼저 링크를 넣고 [영상 불러오기] 를 눌러주세요."); return; }
+  window.__setBox(which === "start" ? "box_start" : "box_end", window.__fmtTime(t));
+};
+
+// 현재 위치부터 N초 (숏츠 길이 맞추기)
+window.__markSpan = function (seconds) {
+  var t = window.__currentTime();
+  if (t === null) { alert("먼저 링크를 넣고 [영상 불러오기] 를 눌러주세요."); return; }
+  window.__setBox("box_start", window.__fmtTime(t));
+  window.__setBox("box_end", window.__fmtTime(t + seconds));
+};
+</script>
+<style>
+  #yt-player-host { min-height: 240px; border-radius: 10px; overflow: hidden; }
+  #yt-player-host .placeholder {
+    display: flex; align-items: center; justify-content: center;
+    height: 240px; background: #f3f4f6; color: #6b7280; border-radius: 10px;
+    font-size: 15px;
+  }
+</style>
+"""
+
+PLAYER_PLACEHOLDER = (
+    '<div id="yt-player-host">'
+    '<div class="placeholder">① 위에 유튜브 링크를 붙여넣고 [영상 불러오기] 를 누르세요</div>'
+    "</div>"
+)
+
+
+# ─────────────────────────────────────────────────────────────
+# 콜백 (순수 로직은 테스트 가능하도록 분리)
+# ─────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────
+# 오류 안내
+#   yt-dlp/ffmpeg 원문 대신 무엇을 하면 되는지 한국어로 알려준다.
+# ─────────────────────────────────────────────────────────────
+ERROR_HINTS: list[tuple[str, str]] = [
+    ("not a bot",
+     "유튜브가 사람 확인을 요구합니다. **[고급 설정] → 로그인 쿠키 사용**을 "
+     "`chrome`(쓰는 브라우저)으로 바꾸고 다시 눌러보세요."),
+    ("Sign in to confirm",
+     "유튜브 로그인이 필요한 영상입니다. **[고급 설정] → 로그인 쿠키 사용**을 켜주세요."),
+    ("age-restricted",
+     "연령 제한 영상입니다. **[고급 설정] → 로그인 쿠키 사용**을 켜주세요 "
+     "(해당 브라우저에 유튜브 로그인이 되어 있어야 합니다)."),
+    ("Private video", "비공개 영상이라 받을 수 없습니다."),
+    ("members-only", "채널 멤버십 전용 영상이라 받을 수 없습니다."),
+    ("Video unavailable",
+     "삭제되었거나 이 지역에서 볼 수 없는 영상입니다. 링크를 다시 확인해주세요."),
+    ("Unable to connect",
+     "인터넷 연결이 막혀 있습니다. 회사망·학교망·VPN 을 쓰고 있다면 해제하고 다시 시도하세요."),
+    ("proxy",
+     "인터넷 연결이 막혀 있습니다. 회사망·학교망·VPN 을 쓰고 있다면 해제하고 다시 시도하세요."),
+    ("HTTP Error 403",
+     "유튜브가 바뀌어 다운로더가 낡았을 수 있습니다. 창을 닫았다가 **실행.bat** 을 "
+     "다시 더블클릭하면 자동으로 최신 버전을 받아옵니다."),
+    ("ffmpeg",
+     "영상 처리기(ffmpeg)를 찾지 못했습니다. 창을 닫고 **실행.bat** 을 다시 "
+     "더블클릭하면 자동으로 설치됩니다."),
+    ("No space left",
+     "저장 공간이 부족합니다. 디스크를 비우고 다시 시도하세요."),
+]
+
+
+def explain_error(raw: str) -> str:
+    """오류 원문에서 대응 방법을 찾아 안내문으로 바꾼다. 원문은 접어서 함께 보여준다."""
+    text = str(raw)
+    hint = next(
+        (msg for key, msg in ERROR_HINTS if key.lower() in text.lower()),
+        "영상을 가져오지 못했습니다. 링크를 확인하고 다시 시도해주세요.",
+    )
+    return (
+        f"❌ {hint}\n\n"
+        "<details><summary>자세한 오류 내용</summary>\n\n"
+        f"```\n{text.strip()}\n```\n</details>"
+    )
+
+
+
+def describe_video(info: dict) -> str:
+    """영상 정보를 화면용 마크다운으로."""
+    dur = info.get("duration")
+    lines = [
+        f"**{info.get('title') or '(제목 없음)'}**",
+        f"채널: {info.get('uploader') or '-'} · "
+        f"길이: {yc.format_human(dur) if dur else '-'} · "
+        f"라이선스: {info.get('license') or '표준 유튜브 라이선스'}",
+    ]
+    if not info.get("license"):
+        lines.append(
+            "> ⚠️ 표준 라이선스 영상입니다. 원본을 그대로 숏츠로 올리면 "
+            "저작권 클레임 대상이 될 수 있습니다."
+        )
+    return "\n\n".join(lines)
+
+
+def chapter_choices(info: dict) -> list[str]:
+    """챕터를 '시작~끝  제목' 형태의 선택지로."""
+    out = []
+    for c in info.get("chapters") or []:
+        start = yc.format_human(c.get("start_time", 0))
+        end = yc.format_human(c.get("end_time", 0))
+        out.append(f"{start}~{end}  {c.get('title', '')}".strip())
+    return out
+
+
+def parse_chapter_choice(choice: str) -> tuple[str, str]:
+    """선택한 챕터에서 시작·끝 시간 문자열을 뽑는다."""
+    head = str(choice).split("  ")[0]
+    start, end = yc.parse_range(head)
+    return yc.format_human(start), yc.format_human(end)
+
+
+def duration_label(start: str, end: str) -> str:
+    """시작·끝 입력에 따라 길이와 숏츠 적합 여부를 알려준다."""
+    if not start or not end:
+        return "시작과 끝을 정해주세요."
+    try:
+        seg = yc.Segment(yc.parse_timecode(start), yc.parse_timecode(end))
+    except yc.ClipError as e:
+        return f"⚠️ {e}"
+    secs = seg.duration
+    if secs > yc.SHORTS_MAX_SECONDS:
+        note = f"숏츠 최대 {yc.SHORTS_MAX_SECONDS // 60}분을 넘습니다"
+    elif secs < 5:
+        note = "너무 짧습니다"
+    else:
+        note = "숏츠 길이로 적당합니다"
+    return f"길이 **{secs:.1f}초** — {note}"
+
+
+def _open_folder(path: Path) -> None:
+    """탐색기/파인더로 결과 폴더 열기."""
+    path = Path(path).resolve()
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(path)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.run(["open", str(path)], check=False)
+        else:
+            subprocess.run(["xdg-open", str(path)], check=False)
+    except Exception:
+        pass
+
+
+def build_app() -> gr.Blocks:
+    with gr.Blocks(title="유튜브 구간 추출기") as app:
+        info_state = gr.State({})
+
+        gr.Markdown(
+            "# ✂️ 유튜브 구간 추출기\n"
+            "링크를 넣고 → 영상을 보다가 → **[여기가 시작] / [여기가 끝]** 을 누르고 → "
+            "**[클립 만들기]**. 시간은 직접 입력해도 됩니다."
+        )
+
+        gr.Markdown("### ① 영상 불러오기")
+        with gr.Row():
+            url_box = gr.Textbox(
+                label="유튜브 링크",
+                placeholder="https://www.youtube.com/watch?v=...",
+                scale=5,
+                autofocus=True,
+            )
+            load_btn = gr.Button("영상 불러오기", variant="secondary", scale=1)
+
+        info_md = gr.Markdown("")
+        player = gr.HTML(PLAYER_PLACEHOLDER)
+
+        chapters = gr.Dropdown(
+            label="챕터에서 고르기", choices=[], visible=False, interactive=True
+        )
+
+        gr.Markdown("### ② 구간 정하기")
+        with gr.Row():
+            mark_start = gr.Button("⏱ 여기가 시작")
+            mark_end = gr.Button("⏹ 여기가 끝")
+            span15 = gr.Button("여기부터 15초")
+            span30 = gr.Button("여기부터 30초")
+            span60 = gr.Button("여기부터 60초")
+
+        with gr.Row():
+            start_box = gr.Textbox(label="시작", elem_id="box_start", placeholder="1:30")
+            end_box = gr.Textbox(label="끝", elem_id="box_end", placeholder="2:10")
+        length_md = gr.Markdown("시작과 끝을 정해주세요.", elem_id="length_md")
+
+        with gr.Accordion("고급 설정", open=False):
+            with gr.Row():
+                quality = gr.Dropdown(
+                    label="화질(최대)", choices=["1080", "720", "480"], value="1080"
+                )
+                audio_only = gr.Checkbox(label="음성만 추출 (mp3)", value=False)
+                fast = gr.Checkbox(
+                    label="빠르게 자르기 (시작점이 몇 초 밀릴 수 있음)", value=False
+                )
+            cookies_browser = gr.Dropdown(
+                label="로그인 쿠키 사용 (연령제한·봇 확인 영상일 때)",
+                choices=["사용 안 함", "chrome", "edge", "firefox", "whale"],
+                value="사용 안 함",
+            )
+
+        gr.Markdown("### ③ 만들기")
+        make_btn = gr.Button("✂️ 클립 만들기", variant="primary", size="lg")
+        status_md = gr.Markdown("")
+        result_video = gr.Video(label="결과 미리보기", visible=False)
+        result_file = gr.File(label="파일 저장하기", visible=False)
+        open_btn = gr.Button("📂 저장 폴더 열기", visible=False)
+
+        # ── 영상 불러오기 ──
+        def on_load(url):
+            if not str(url).strip():
+                return ("링크를 먼저 넣어주세요.", {}, gr.update(visible=False), "", "")
+            try:
+                ref = yc.parse_youtube_url(url)
+                info = yc.probe(ref.url)
+            except yc.ClipError as e:
+                return (explain_error(e), {}, gr.update(visible=False), "", "")
+
+            choices = chapter_choices(info)
+            start_default = yc.format_human(ref.start_hint) if ref.start_hint else ""
+            return (
+                describe_video(info),
+                info,
+                gr.update(choices=choices, visible=bool(choices), value=None),
+                start_default,
+                "",
+            )
+
+        load_btn.click(
+            on_load,
+            inputs=url_box,
+            outputs=[info_md, info_state, chapters, start_box, end_box],
+        ).then(
+            None,
+            inputs=url_box,
+            outputs=None,
+            js="(u) => { try { var id = u.match(/(?:v=|be\\/|shorts\\/|embed\\/|live\\/)([A-Za-z0-9_-]{11})/); "
+               "if (!id) { id = u.trim().match(/^([A-Za-z0-9_-]{11})$/); } "
+               "if (id) { window.__loadPlayer(id[1], 0); } } catch(e) {} }",
+        )
+        url_box.submit(
+            on_load,
+            inputs=url_box,
+            outputs=[info_md, info_state, chapters, start_box, end_box],
+        ).then(
+            None,
+            inputs=url_box,
+            outputs=None,
+            js="(u) => { try { var id = u.match(/(?:v=|be\\/|shorts\\/|embed\\/|live\\/)([A-Za-z0-9_-]{11})/); "
+               "if (!id) { id = u.trim().match(/^([A-Za-z0-9_-]{11})$/); } "
+               "if (id) { window.__loadPlayer(id[1], 0); } } catch(e) {} }",
+        )
+
+        # ── 재생 위치를 입력칸에 채우기 (브라우저에서만 동작) ──
+        mark_start.click(None, js="() => window.__mark('start')")
+        mark_end.click(None, js="() => window.__mark('end')")
+        span15.click(None, js="() => window.__markSpan(15)")
+        span30.click(None, js="() => window.__markSpan(30)")
+        span60.click(None, js="() => window.__markSpan(60)")
+
+        # ── 챕터 선택 → 시작/끝 채우기 ──
+        def on_chapter(choice):
+            if not choice:
+                return gr.update(), gr.update()
+            start, end = parse_chapter_choice(choice)
+            return start, end
+
+        chapters.change(on_chapter, inputs=chapters, outputs=[start_box, end_box])
+
+        # ── 길이 안내 ──
+        for box in (start_box, end_box):
+            box.change(duration_label, inputs=[start_box, end_box], outputs=length_md)
+
+        # ── 클립 만들기 ──
+        def on_make(url, start, end, quality, audio_only, fast, cookies_browser):
+            hidden = gr.update(visible=False)
+            if not str(url).strip():
+                yield "⚠️ 링크를 넣어주세요.", hidden, hidden, hidden
+                return
+            if not str(start).strip() or not str(end).strip():
+                yield "⚠️ 시작과 끝 시간을 정해주세요.", hidden, hidden, hidden
+                return
+            try:
+                segment = yc.Segment(yc.parse_timecode(start), yc.parse_timecode(end))
+            except yc.ClipError as e:
+                yield f"⚠️ {e}", hidden, hidden, hidden
+                return
+
+            yield (
+                f"⏳ {segment.label} 구간을 내려받아 자르는 중입니다... "
+                "(길이·화질에 따라 수십 초 걸립니다)",
+                hidden, hidden, hidden,
+            )
+            try:
+                paths = yc.extract_segments(
+                    url,
+                    [segment],
+                    out_dir=OUT_DIR,
+                    quality=int(quality),
+                    audio_only=bool(audio_only),
+                    precise=not bool(fast),
+                    cookies_from_browser=(
+                        None if cookies_browser == "사용 안 함" else cookies_browser
+                    ),
+                )
+            except yc.ClipError as e:
+                yield explain_error(e), hidden, hidden, hidden
+                return
+
+            path = paths[0]
+            size_mb = path.stat().st_size / 1024 / 1024
+            yield (
+                f"✅ 완료 — `{path.name}` ({size_mb:.1f}MB, {segment.duration:.1f}초)",
+                gr.update(value=str(path), visible=not audio_only),
+                gr.update(value=str(path), visible=True),
+                gr.update(visible=True),
+            )
+
+        make_btn.click(
+            on_make,
+            inputs=[url_box, start_box, end_box, quality, audio_only, fast, cookies_browser],
+            outputs=[status_md, result_video, result_file, open_btn],
+        )
+        open_btn.click(lambda: _open_folder(OUT_DIR), inputs=None, outputs=None)
+
+    return app
+
+
+# head/theme 는 Gradio 6 부터 launch() 인자다.
+LAUNCH_KWARGS = dict(head=HEAD, theme=gr.themes.Soft())
+
+
+def main() -> int:
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    if yc.find_ffmpeg() is None:
+        print("⚠️ ffmpeg 를 찾지 못했습니다. `pip install imageio-ffmpeg` 를 실행하세요.")
+    print("\n브라우저가 자동으로 열립니다. 안 열리면 아래 주소를 직접 여세요.")
+    build_app().launch(inbrowser=True, **LAUNCH_KWARGS)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

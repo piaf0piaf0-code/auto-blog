@@ -31,11 +31,24 @@ python -m src.run_pipeline brief --keyword "전세자금대출 조건"
 python -m src.run_pipeline publish --file drafts/전세자금대출-조건.md --site finwiz
 ```
 
-### 유튜브 숏츠 소재 뽑기
+### 유튜브 숏츠 소재 뽑기 (노코드)
+
+명령어 없이 씁니다. **`실행.bat` 더블클릭** → 브라우저 화면이 열립니다.
+
+```
+① 유튜브 링크 붙여넣기 → [영상 불러오기]
+② 영상을 보다가 [⏱ 여기가 시작] / [⏹ 여기가 끝]  (또는 [여기부터 30초])
+③ [✂️ 클립 만들기] → [파일 저장하기]
+```
+
+시간을 손으로 적을 필요가 없습니다. 필요한 것(ffmpeg 포함)은 첫 실행 때
+자동으로 설치됩니다. 파이썬만 미리 깔려 있으면 됩니다
+(설치 시 **"Add python.exe to PATH" 체크**).
+
+<details>
+<summary>명령줄로 쓰기 (자동화용)</summary>
 
 ```bash
-# ffmpeg 가 필요하다 (brew install ffmpeg / sudo apt install ffmpeg)
-
 # 영상 정보·챕터 확인 (다운로드 없음)
 python -m src.run_pipeline clip --url "https://youtu.be/XXXXXXXXXXX" --info
 
@@ -46,6 +59,7 @@ python -m src.run_pipeline clip --url "https://youtu.be/XXXXXXXXXXX" --start 1:3
 python -m src.run_pipeline clip --url "https://youtu.be/XXXXXXXXXXX" \
   --range 1:30-2:10 --range 5:00-5:45
 ```
+</details>
 
 자세한 내용: [docs/09-유튜브-숏츠-소재-추출.md](docs/09-유튜브-숏츠-소재-추출.md)
 
@@ -78,7 +92,9 @@ auto-blog/
 │   ├── content_brief.py   # 검색의도 기반 콘텐츠 초안 생성
 │   ├── wordpress_publisher.py # 워드프레스 REST API 발행
 │   ├── youtube_clipper.py # 유튜브 구간 추출 (숏츠 소재)
+│   ├── shorts_ui.py       # 위 기능의 노코드 웹 화면
 │   └── run_pipeline.py    # CLI 진입점
+├── 실행.bat               # Windows: 더블클릭하면 숏츠 추출 화면이 열린다
 ├── tests/                 # 단위 테스트 (python -m unittest discover -s tests)
 ├── drafts/                # 생성된 초안 (검수 대기) — git 미추적
 ├── outputs/               # 추출한 클립·원본 — git 미추적
