@@ -6,6 +6,7 @@
     python -m src.run_pipeline publish --file drafts/xxx.md --site bodybalance
     python -m src.run_pipeline sites
     python -m src.run_pipeline clip --url "https://youtu.be/XXXXXXXXXXX" --start 1:30 --end 2:10
+    python -m src.run_pipeline clip --url "https://youtu.be/XXXXXXXXXXX" --start 1:30 --duration 45 --vertical
 """
 from __future__ import annotations
 
@@ -143,6 +144,28 @@ def cmd_clip(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
     )
 
+    # 숏츠용 세로 변환 (선택)
+    if args.vertical:
+        from . import vertical as vt
+
+        print(f"\n[세로 변환] {vt.MODE_LABELS[args.vertical]} · 1080x1920")
+        converted = []
+        for i, path in enumerate(paths, 1):
+            print(f"  [{i}/{len(paths)}] {path.name}")
+            if args.dry_run:
+                out = path.with_name(f"{path.stem}_세로{path.suffix}")
+                print("  $ " + " ".join(
+                    vt.build_vertical_command(path, out, mode=args.vertical)
+                ))
+            else:
+                out = vt.make_vertical(
+                    path, mode=args.vertical, text=args.text,
+                    position=args.text_position, replace=not args.keep_wide,
+                )
+                print(f"  ✅ {out}")
+            converted.append(out)
+        paths = converted
+
     print(f"\n완료: {len(paths)}개 파일 → {args.out}/")
     return 0
 
@@ -212,6 +235,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pc.add_argument("--cookies", help="쿠키 파일 경로 (연령제한·로그인 필요 영상)")
     pc.add_argument("--cookies-from-browser", help="브라우저에서 쿠키 사용 (예: chrome)")
+    pc.add_argument(
+        "--vertical",
+        nargs="?",
+        const="blur",
+        choices=["blur", "crop", "pad"],
+        help="숏츠용 세로(1080x1920)로 변환. blur=흐린 배경(기본), "
+             "crop=가운데 꽉 채우기, pad=검은 여백",
+    )
+    pc.add_argument("--text", help="영상에 넣을 훅 문구 (--vertical 과 함께)")
+    pc.add_argument(
+        "--text-position",
+        choices=["top", "middle", "bottom"],
+        default="top",
+        help="문구 위치 (기본 top)",
+    )
+    pc.add_argument(
+        "--keep-wide",
+        action="store_true",
+        help="세로 변환 후에도 원래 가로 클립을 남긴다",
+    )
     pc.add_argument("--info", action="store_true", help="다운로드 없이 제목·길이·챕터만 확인")
     pc.add_argument("--dry-run", action="store_true", help="실행할 명령만 출력")
     pc.set_defaults(func=cmd_clip)

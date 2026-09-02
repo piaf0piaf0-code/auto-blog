@@ -31,14 +31,15 @@ python -m src.run_pipeline brief --keyword "전세자금대출 조건"
 python -m src.run_pipeline publish --file drafts/전세자금대출-조건.md --site finwiz
 ```
 
-### 유튜브 숏츠 소재 뽑기 (노코드)
+### 유튜브 숏츠 만들기 (노코드)
 
 명령어 없이 씁니다. **`실행.bat` 더블클릭** → 브라우저 화면이 열립니다.
 
 ```
 ① 유튜브 링크 붙여넣기 → [영상 불러오기]
 ② 영상을 보다가 [⏱ 여기가 시작] / [⏹ 여기가 끝]  (또는 [여기부터 30초])
-③ [✂️ 클립 만들기] → [파일 저장하기]
+③ 숏츠 모양 고르기 (세로 9:16 변환 기본 켜짐 · 훅 문구 입력 가능)
+④ [✂️ 클립 만들기] → [파일 저장하기]
 ```
 
 시간을 손으로 적을 필요가 없습니다. 필요한 것(ffmpeg 포함)은 첫 실행 때
@@ -54,6 +55,10 @@ python -m src.run_pipeline clip --url "https://youtu.be/XXXXXXXXXXX" --info
 
 # 1:30 ~ 2:10 구간만 추출 → outputs/clips/
 python -m src.run_pipeline clip --url "https://youtu.be/XXXXXXXXXXX" --start 1:30 --end 2:10
+
+# 자른 뒤 숏츠용 세로(1080x1920)로 변환 + 훅 문구
+python -m src.run_pipeline clip --url "https://youtu.be/XXXXXXXXXXX" --start 1:30 --duration 45 \
+  --vertical --text "이 장면 하나로 조회수가 터졌습니다"
 
 # 한 영상에서 여러 클립 (원본은 한 번만 내려받는다)
 python -m src.run_pipeline clip --url "https://youtu.be/XXXXXXXXXXX" \
@@ -76,7 +81,7 @@ python -m src.run_pipeline clip --url "https://youtu.be/XXXXXXXXXXX" \
 | 3 | [docs/03-키워드-선정-가이드.md](docs/03-키워드-선정-가이드.md) | 고단가·저경쟁 키워드 찾는 법 |
 | 4 | [docs/04-콘텐츠-품질-체크리스트.md](docs/04-콘텐츠-품질-체크리스트.md) | 페널티 피하면서 자동화하는 기준 |
 | 5 | [docs/05-자동화-아키텍처.md](docs/05-자동화-아키텍처.md) | make.com + Claude + 워드프레스 설계 |
-| 6 | [docs/09-유튜브-숏츠-소재-추출.md](docs/09-유튜브-숏츠-소재-추출.md) | 유튜브 링크 → 원하는 구간 추출 (숏츠 1단계) |
+| 6 | [docs/09-유튜브-숏츠-소재-추출.md](docs/09-유튜브-숏츠-소재-추출.md) | 유튜브 링크 → 구간 추출 → 세로 숏츠 영상 |
 
 ---
 
@@ -91,7 +96,8 @@ auto-blog/
 │   ├── keyword_planner.py # Claude 기반 키워드 기회 발굴
 │   ├── content_brief.py   # 검색의도 기반 콘텐츠 초안 생성
 │   ├── wordpress_publisher.py # 워드프레스 REST API 발행
-│   ├── youtube_clipper.py # 유튜브 구간 추출 (숏츠 소재)
+│   ├── youtube_clipper.py # 유튜브 구간 추출 (숏츠 1단계)
+│   ├── vertical.py        # 9:16 세로 변환 + 훅 문구 (숏츠 2단계)
 │   ├── shorts_ui.py       # 위 기능의 노코드 웹 화면
 │   └── run_pipeline.py    # CLI 진입점
 ├── 실행.bat               # Windows: 더블클릭하면 숏츠 추출 화면이 열린다

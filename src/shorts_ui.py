@@ -19,6 +19,7 @@ from pathlib import Path
 
 import gradio as gr
 
+from . import vertical as vt
 from . import youtube_clipper as yc
 
 OUT_DIR = Path("outputs/clips")
@@ -144,6 +145,9 @@ ERROR_HINTS: list[tuple[str, str]] = [
     ("ffmpeg",
      "영상 처리기(ffmpeg)를 찾지 못했습니다. 창을 닫고 **실행.bat** 을 다시 "
      "더블클릭하면 자동으로 설치됩니다."),
+    ("폰트",
+     "한글 폰트를 찾지 못해 문구를 넣을 수 없습니다. **영상에 넣을 문구**를 비우고 "
+     "다시 시도하거나, 나눔고딕을 설치해주세요."),
     ("No space left",
      "저장 공간이 부족합니다. 디스크를 비우고 다시 시도하세요."),
 ]
@@ -270,6 +274,32 @@ def build_app() -> gr.Blocks:
             end_box = gr.Textbox(label="끝", elem_id="box_end", placeholder="2:10")
         length_md = gr.Markdown("시작과 끝을 정해주세요.", elem_id="length_md")
 
+        gr.Markdown("### ③ 숏츠 모양")
+        with gr.Row():
+            vertical = gr.Checkbox(
+                label="세로(9:16)로 변환 — 유튜브가 숏츠로 인식하려면 필요합니다",
+                value=True,
+                scale=2,
+            )
+            vmode = gr.Radio(
+                label="변환 방식",
+                choices=[(label, key) for key, label in vt.MODE_LABELS.items()],
+                value="blur",
+                scale=3,
+            )
+        with gr.Row():
+            hook_text = gr.Textbox(
+                label="영상에 넣을 문구 (선택)",
+                placeholder="예: 이 장면 하나로 조회수가 터졌습니다",
+                scale=3,
+            )
+            text_pos = gr.Radio(
+                label="문구 위치",
+                choices=[("위", "top"), ("가운데", "middle"), ("아래", "bottom")],
+                value="top",
+                scale=2,
+            )
+
         with gr.Accordion("고급 설정", open=False):
             with gr.Row():
                 quality = gr.Dropdown(
@@ -285,7 +315,7 @@ def build_app() -> gr.Blocks:
                 value="사용 안 함",
             )
 
-        gr.Markdown("### ③ 만들기")
+        gr.Markdown("### ④ 만들기")
         make_btn = gr.Button("✂️ 클립 만들기", variant="primary", size="lg")
         status_md = gr.Markdown("")
         result_video = gr.Video(label="결과 미리보기", visible=False)
@@ -358,7 +388,8 @@ def build_app() -> gr.Blocks:
             box.change(duration_label, inputs=[start_box, end_box], outputs=length_md)
 
         # ── 클립 만들기 ──
-        def on_make(url, start, end, quality, audio_only, fast, cookies_browser):
+        def on_make(url, start, end, quality, audio_only, fast, cookies_browser,
+                    vertical, vmode, hook_text, text_pos):
             hidden = gr.update(visible=False)
             if not str(url).strip():
                 yield "⚠️ 링크를 넣어주세요.", hidden, hidden, hidden
@@ -394,9 +425,29 @@ def build_app() -> gr.Blocks:
                 return
 
             path = paths[0]
+
+            # 숏츠는 세로여야 유튜브가 숏츠로 인식한다.
+            shape = "가로 원본"
+            if vertical and not audio_only:
+                yield (
+                    f"⏳ 세로(9:16)로 바꾸는 중입니다... "
+                    f"({vt.MODE_LABELS.get(vmode, '')})",
+                    hidden, hidden, hidden,
+                )
+                try:
+                    path = vt.make_vertical(
+                        path, mode=vmode, text=hook_text or None,
+                        position=text_pos, replace=True,
+                    )
+                    shape = "1080x1920 세로"
+                except yc.ClipError as e:
+                    yield explain_error(e), hidden, hidden, hidden
+                    return
+
             size_mb = path.stat().st_size / 1024 / 1024
             yield (
-                f"✅ 완료 — `{path.name}` ({size_mb:.1f}MB, {segment.duration:.1f}초)",
+                f"✅ 완료 — `{path.name}`\n\n"
+                f"{shape} · {segment.duration:.1f}초 · {size_mb:.1f}MB",
                 gr.update(value=str(path), visible=not audio_only),
                 gr.update(value=str(path), visible=True),
                 gr.update(visible=True),
@@ -404,7 +455,8 @@ def build_app() -> gr.Blocks:
 
         make_btn.click(
             on_make,
-            inputs=[url_box, start_box, end_box, quality, audio_only, fast, cookies_browser],
+            inputs=[url_box, start_box, end_box, quality, audio_only, fast, cookies_browser,
+                    vertical, vmode, hook_text, text_pos],
             outputs=[status_md, result_video, result_file, open_btn],
         )
         open_btn.click(lambda: _open_folder(OUT_DIR), inputs=None, outputs=None)
