@@ -162,12 +162,83 @@ function finwiz로드맵가져오기() {
   순서.getRange(2, 1, 순서줄.length, finwiz순서헤더.length).setValues(순서줄);
   순서.autoResizeColumn(9);
 
+  // ── 사실카드 틀 ──────────────────────────────────────
+  var 카드결과 = finwiz카드틀깔기();
+
   SpreadsheetApp.flush();
   return {
     글수: 순서줄.length,
     링크수: 링크줄.length,
-    주소있음: 링크줄.filter(function (줄) { return !!줄[3]; }).length
+    주소있음: 링크줄.filter(function (줄) { return !!줄[3]; }).length,
+    카드항목: 카드결과.전체,
+    카드채움: 카드결과.채움
   };
+}
+
+/**
+ * 사실카드 탭에 '무엇을 확인해야 하는가' 목록을 깔아 둔다.
+ *
+ * 값은 비워 둔다. 값은 사용자가 공식 페이지에서 확인해 채운다.
+ * 이미 채워 둔 값과 기준일은 절대 지우지 않는다.
+ */
+function finwiz카드틀깔기() {
+  if (typeof finwiz카드틀 === 'undefined') return { 전체: 0, 채움: 0 };
+
+  var 출처표 = {};
+  if (typeof finwiz출처자료 !== 'undefined') {
+    finwiz출처자료.forEach(function (줄) { 출처표[줄[0]] = 줄[3]; });
+  }
+
+  var 탭 = finwiz탭(finwiz사실탭, finwiz사실헤더);
+  var 이전 = {};
+  if (탭.getLastRow() >= 2) {
+    탭.getRange(2, 1, 탭.getLastRow() - 1, finwiz사실헤더.length).getValues()
+      .forEach(function (줄) {
+        var 열쇠 = String(줄[0] || '').trim() + '\u0000' + finwiz소제목열쇠(줄[1]);
+        var 값 = String(줄[2] || '').trim();
+        if (값) 이전[열쇠] = { 값: 값, 기준일: finwiz날짜글자(줄[3]),
+                              출처: String(줄[4] || '').trim() };
+      });
+  }
+
+  var 줄들 = [], 채움 = 0, 남은것 = {};
+  for (var 열쇠2 in 이전) 남은것[열쇠2] = true;
+
+  for (var 클러스터 in finwiz카드틀) {
+    finwiz카드틀[클러스터].forEach(function (한개) {
+      var 열쇠 = 클러스터 + '\u0000' + finwiz소제목열쇠(한개[0]);
+      var 옛것 = 이전[열쇠];
+      delete 남은것[열쇠];
+      if (옛것) 채움++;
+      줄들.push([클러스터, 한개[0], 옛것 ? 옛것.값 : '',
+                 옛것 ? 옛것.기준일 : '',
+                 (옛것 && 옛것.출처) ? 옛것.출처 : (출처표[한개[1]] || '')]);
+    });
+  }
+
+  // 틀에 없지만 사용자가 직접 넣어 둔 줄은 뒤에 그대로 살린다
+  if (탭.getLastRow() >= 2) {
+    탭.getRange(2, 1, 탭.getLastRow() - 1, finwiz사실헤더.length).getValues()
+      .forEach(function (줄) {
+        var 클러스터 = String(줄[0] || '').trim();
+        var 항목 = String(줄[1] || '').trim();
+        if (!클러스터 || !항목) return;
+        var 열쇠 = 클러스터 + '\u0000' + finwiz소제목열쇠(항목);
+        if (!남은것[열쇠]) return;
+        delete 남은것[열쇠];
+        줄들.push([클러스터, 항목, String(줄[2] || '').trim(),
+                   finwiz날짜글자(줄[3]), String(줄[4] || '').trim()]);
+        if (String(줄[2] || '').trim()) 채움++;
+      });
+  }
+
+  if (탭.getLastRow() >= 2) {
+    탭.getRange(2, 1, 탭.getLastRow() - 1, 탭.getLastColumn()).clearContent();
+  }
+  if (줄들.length) {
+    탭.getRange(2, 1, 줄들.length, finwiz사실헤더.length).setValues(줄들);
+  }
+  return { 전체: 줄들.length, 채움: 채움 };
 }
 
 function finwiz로드맵메뉴() {
@@ -398,15 +469,20 @@ function finwiz며칠지났나(기준일) {
 
 /** 이 주제의 사실카드 상태. 없으면 없음, 오래됐으면 오래됨. */
 function finwiz카드상태(클러스터, 사실맵) {
-  var 줄들 = (사실맵 || finwiz사실읽기())[클러스터] || [];
-  if (!줄들.length) return { 있음: false, 개수: 0, 오래됨: false, 지난날: -1 };
+  var 모든줄 = (사실맵 || finwiz사실읽기())[클러스터] || [];
+  // 값이 비어 있는 줄은 '아직 확인 안 한 항목'이다. 카드가 있다고 보지 않는다.
+  var 줄들 = 모든줄.filter(function (하나) { return !!하나.값; });
+  if (!줄들.length) {
+    return { 있음: false, 개수: 0, 빈줄: 모든줄.length,
+             오래됨: false, 지난날: -1, 줄들: [] };
+  }
   var 최대 = -1;
   줄들.forEach(function (하나) {
     var d = finwiz며칠지났나(하나.기준일);
     if (d > 최대) 최대 = d;
   });
   return {
-    있음: true, 개수: 줄들.length,
+    있음: true, 개수: 줄들.length, 빈줄: 모든줄.length - 줄들.length,
     오래됨: 최대 > finwiz사실유효일, 지난날: 최대, 줄들: 줄들
   };
 }
@@ -450,14 +526,28 @@ function finwiz사실카드요청문(클러스터) {
   조각.push('- 값에는 단위를 붙여 주세요. 예: `연 3.6%`, `최대 1,200만원`, `연소득 4,500만원 이하`');
   조각.push('- 기준일은 그 페이지에 적힌 시행일·갱신일을 쓰고, 없으면 오늘(' + 오늘 + ')로 하세요.');
   조각.push('- 출처는 위 목록에 있는 주소 중 그 값이 실제로 적혀 있던 주소를 쓰세요.');
-  조각.push('- 12~20줄이면 충분합니다. 한도·금리·소득요건·나이요건·대상·신청처를 우선으로 넣어 주세요.');
+  조각.push('- 아래 [채울 항목] 을 그대로 쓰고 값만 채워 주세요. 항목 이름을 바꾸지 마세요.');
+  조각.push('- 확인 못 한 항목은 그 줄을 아예 빼세요. 빈칸이나 "확인 필요"로 채우지 마세요.');
+  조각.push('- 알아낸 값이 더 있으면 아래 목록 뒤에 줄을 추가해도 됩니다.');
   조각.push('');
+
+  var 항목들 = (typeof finwiz카드틀 !== 'undefined') ? (finwiz카드틀[클러스터] || []) : [];
+  if (항목들.length) {
+    조각.push('[채울 항목 ' + 항목들.length + '개]');
+    항목들.forEach(function (한개) { 조각.push('- ' + 한개[0]); });
+    조각.push('');
+  }
+
   조각.push('[출력 형식]');
   조각.push('표 하나만 답해 주세요. 인사말이나 설명은 붙이지 마세요.');
   조각.push('');
   조각.push('| 항목 | 값 | 기준일 | 출처 |');
   조각.push('|---|---|---|---|');
-  조각.push('| 햇살론 일반 최대 한도 | 최대 2,000만원 | 2026-01-02 | https://www.kinfa.or.kr/... |');
+  if (항목들.length) {
+    조각.push('| ' + 항목들[0][0] + ' | (확인한 값) | ' + 오늘 + ' | (그 값이 적힌 주소) |');
+  } else {
+    조각.push('| 햇살론 일반 대출한도 | 최대 2,000만원 | ' + 오늘 + ' | https://www.kinfa.or.kr/... |');
+  }
 
   return { 요청문: 조각.join('\n'), 클러스터: 클러스터, 글수: 이주제.length,
            출처: 출처, GPT주소: (typeof 마이GPT주소 !== 'undefined') ? 마이GPT주소 : '' };
@@ -488,17 +578,61 @@ function finwiz사실카드저장(클러스터, 답변) {
     ] };
   }
 
+  // 받은 값을 항목 이름으로 짝지어 둔다 (띄어쓰기·기호 차이는 무시)
+  var 받은것 = {};
+  줄들.forEach(function (한줄) { 받은것[finwiz소제목열쇠(한줄[1])] = 한줄; });
+
   var 탭 = finwiz탭(finwiz사실탭, finwiz사실헤더);
-  // 이 주제의 기존 줄을 아래에서부터 지운다
-  if (탭.getLastRow() >= 2) {
-    var 있는것 = 탭.getRange(2, 1, 탭.getLastRow() - 1, 1).getValues();
-    for (var i = 있는것.length - 1; i >= 0; i--) {
-      if (String(있는것[i][0] || '').trim() === 클러스터) 탭.deleteRow(i + 2);
+  var 지금 = (탭.getLastRow() >= 2)
+    ? 탭.getRange(2, 1, 탭.getLastRow() - 1, finwiz사실헤더.length).getValues() : [];
+
+  // ① 이 주제의 기존 줄은 자리를 지키면서 값만 갈아끼운다
+  var 새것 = [], 채운수 = 0, 쓴것 = {};
+  지금.forEach(function (한줄) {
+    var 클 = String(한줄[0] || '').trim();
+    var 항 = String(한줄[1] || '').trim();
+    if (!클 || !항) return;
+    if (클 !== 클러스터) { 새것.push(한줄.slice(0, finwiz사실헤더.length)); return; }
+    var 열쇠 = finwiz소제목열쇠(항);
+    var 받음 = 받은것[열쇠];
+    if (받음) {
+      쓴것[열쇠] = true; 채운수++;
+      새것.push([클러스터, 항, 받음[2], 받음[3],
+                 받음[4] || String(한줄[4] || '').trim()]);
+    } else {
+      // 이번에 못 찾은 항목은 지우지 말고 빈 채로 둔다 (다음에 다시 시도)
+      새것.push([클러스터, 항, String(한줄[2] || '').trim(),
+                 finwiz날짜글자(한줄[3]), String(한줄[4] || '').trim()]);
     }
+  });
+
+  // ② 틀에 없던 항목은 이 주제 줄 뒤에 붙인다
+  var 덧붙임 = [];
+  줄들.forEach(function (한줄) {
+    var 열쇠 = finwiz소제목열쇠(한줄[1]);
+    if (쓴것[열쇠]) return;
+    쓴것[열쇠] = true; 채운수++;
+    덧붙임.push(한줄);
+  });
+  if (덧붙임.length) {
+    var 마지막 = -1;
+    새것.forEach(function (한줄, i) { if (한줄[0] === 클러스터) 마지막 = i; });
+    새것 = 새것.slice(0, 마지막 + 1).concat(덧붙임, 새것.slice(마지막 + 1));
   }
-  탭.getRange(탭.getLastRow() + 1, 1, 줄들.length, finwiz사실헤더.length).setValues(줄들);
+
+  if (탭.getLastRow() >= 2) {
+    탭.getRange(2, 1, 탭.getLastRow() - 1, 탭.getLastColumn()).clearContent();
+  }
+  if (새것.length) {
+    탭.getRange(2, 1, 새것.length, finwiz사실헤더.length).setValues(새것);
+  }
   SpreadsheetApp.flush();
-  return { 성공: true, 개수: 줄들.length, 클러스터: 클러스터 };
+
+  var 이주제 = 새것.filter(function (한줄) { return 한줄[0] === 클러스터; });
+  var 아직 = 이주제.filter(function (한줄) { return !String(한줄[2] || '').trim(); });
+  return { 성공: true, 개수: 채운수, 클러스터: 클러스터,
+           전체: 이주제.length, 아직: 아직.length,
+           아직항목: 아직.slice(0, 6).map(function (한줄) { return 한줄[1]; }) };
 }
 
 /** 사실카드가 없거나 오래된 주제 목록. */
@@ -740,7 +874,8 @@ function finwiz다음목록() {
       작성상태: 한줄.작성상태 || '미작성',
       링크수: 링크.length,
       링크: 링크,
-      카드있음: 카드.있음, 카드오래됨: 카드.오래됨, 카드개수: 카드.개수
+      카드있음: 카드.있음, 카드오래됨: 카드.오래됨, 카드개수: 카드.개수,
+      카드빈줄: 카드.빈줄 || 0
     };
   });
 
@@ -876,7 +1011,7 @@ function finwiz요청문(순번) {
     : '(본문. 소제목은 ## 로 씁니다.)\n\n## 최종 정리하면\n(핵심 정리)\n\n## 메타 디스크립션\n(한 문장)\n\n## 관련 태그\n(쉼표로 8~10개)');
 
   return { 요청문: 조각.join('\n'), 제목: 대상.제목, 링크: 링크,
-           출처: 출처, 카드: { 있음: 카드.있음, 개수: 카드.개수,
+           출처: 출처, 카드: { 있음: 카드.있음, 개수: 카드.개수, 빈줄: 카드.빈줄 || 0,
                              오래됨: 카드.오래됨, 지난날: 카드.지난날 },
            클러스터: 대상.클러스터,
            메인키워드: 대상.메인키워드,
