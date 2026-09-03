@@ -43,6 +43,21 @@ if errorlevel 1 (
 echo 유튜브 다운로더를 최신 버전으로 맞추는 중...
 pip install -q -U yt-dlp >nul 2>nul
 
+python -c "import gradio, yt_dlp, imageio_ffmpeg" 2>nul
+if errorlevel 1 (
+    echo.
+    echo [오류] 필요한 프로그램이 제대로 설치되지 않았습니다.
+    echo.
+    echo   해결 방법:
+    echo     1. 이 폴더의 .venv 폴더를 통째로 지우세요.
+    echo     2. 이 파일을 다시 더블클릭하세요.
+    echo.
+    echo   그래도 안 되면 아래 줄을 그대로 알려주세요:
+    python -c "import gradio, yt_dlp, imageio_ffmpeg"
+    pause
+    exit /b 1
+)
+
 echo.
 echo 브라우저가 열립니다. 창을 닫으면 프로그램이 종료됩니다.
 echo (이 검은 창은 켜 둔 채로 사용하세요)

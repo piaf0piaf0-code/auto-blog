@@ -283,6 +283,13 @@ def find_ffmpeg() -> str | None:
     path = shutil.which("ffmpeg")
     if path:
         return path
+
+    # 사용자가 직접 넣어둘 수 있는 자리 (tools/ffmpeg.exe)
+    for name in ("ffmpeg.exe", "ffmpeg"):
+        local = Path("tools") / name
+        if local.exists():
+            return str(local.resolve())
+
     try:
         import imageio_ffmpeg
         return imageio_ffmpeg.get_ffmpeg_exe()
