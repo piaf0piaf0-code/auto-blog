@@ -308,11 +308,38 @@ def require_tool(name: str) -> str:
 
 
 def _ffmpeg_location_args() -> list[str]:
-    """yt-dlp 에 ffmpeg 위치를 알려준다(PATH 에 없을 때 필요)."""
+    """yt-dlp 에 ffmpeg 위치를 알려준다(PATH 에 없을 때 필요).
+
+    ⚠️ 반드시 '실행 파일의 전체 경로' 를 넘겨야 한다. 폴더를 넘기면 yt-dlp 는
+    그 폴더에서 `ffmpeg`/`ffmpeg.exe` 라는 이름을 찾는데, pip 로 들어오는
+    imageio-ffmpeg 의 파일 이름은 `ffmpeg-win-x86_64-v7.1.exe` 처럼 달라서
+    "ffmpeg is not installed" 로 실패한다.
+    """
     if shutil.which("ffmpeg"):
         return []
     path = find_ffmpeg()
-    return ["--ffmpeg-location", str(Path(path).parent)] if path else []
+    return ["--ffmpeg-location", str(path)] if path else []
+
+
+# yt-dlp 가 지원하는 자바스크립트 런타임 (우선순위 순).
+# 기본으로 켜져 있는 건 deno 뿐이라, 다른 게 깔려 있으면 알려줘야 쓴다.
+JS_RUNTIMES = ("deno", "node", "quickjs", "bun")
+
+
+def find_js_runtime() -> str | None:
+    """이 PC 에서 쓸 수 있는 자바스크립트 런타임 이름."""
+    return next((name for name in JS_RUNTIMES if shutil.which(name)), None)
+
+
+def _js_runtime_args() -> list[str]:
+    """유튜브 추출에 쓸 JS 런타임을 yt-dlp 에 알려준다.
+
+    없으면 일부 화질이 빠질 수 있다는 경고가 뜨지만 추출 자체는 대체로 된다.
+    """
+    runtime = find_js_runtime()
+    if runtime is None or runtime == "deno":
+        return []                      # deno 는 yt-dlp 가 기본으로 찾는다
+    return ["--js-runtimes", runtime]
 
 
 def _run(cmd: list[str], *, quiet: bool = False) -> subprocess.CompletedProcess:
@@ -353,6 +380,7 @@ def probe(
         require_tool("yt-dlp"),
         "--no-playlist", "--no-warnings", "--skip-download",
         "--dump-single-json",
+        *_js_runtime_args(),
         *_auth_args(cookies, cookies_from_browser),
         ref.url,
     ]
@@ -436,6 +464,7 @@ def build_section_command(
         "--print-to-file", "after_move:filepath", str(print_file),
         "--no-simulate",
         *_ffmpeg_location_args(),
+        *_js_runtime_args(),
         *_auth_args(cookies, cookies_from_browser),
         ref.url,
     ]
@@ -516,6 +545,7 @@ def build_source_command(
         "--print-to-file", "after_move:filepath", str(print_file),
         "--no-simulate",
         *_ffmpeg_location_args(),
+        *_js_runtime_args(),
         *_auth_args(cookies, cookies_from_browser),
         ref.url,
     ]

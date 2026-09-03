@@ -272,6 +272,17 @@ def system_report() -> str:
         except Exception as e:  # noqa: BLE001
             lines.append(f"- ⚠️ ffmpeg 는 찾았지만 실행되지 않습니다 (`{ffmpeg}`): {e}")
 
+    # 자바스크립트 런타임 (유튜브 추출에 쓰인다. 없으면 일부 화질이 빠질 수 있다)
+    runtime = yc.find_js_runtime()
+    if runtime:
+        lines.append(f"- ✅ 자바스크립트 런타임: {runtime}")
+    else:
+        lines.append(
+            "- ⚠️ 자바스크립트 런타임 없음 — 추출은 되지만 일부 화질이 빠질 수 "
+            "있습니다. 명령 프롬프트에서 `winget install DenoLand.Deno` 로 "
+            "설치하면 좋아집니다(선택)."
+        )
+
     # 저장 공간
     try:
         free = shutil.disk_usage(OUT_DIR.resolve().anchor or ".").free / 1024**3

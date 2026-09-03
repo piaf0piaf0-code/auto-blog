@@ -277,5 +277,63 @@ class TestCacheIsNotDeleted(unittest.TestCase):
                 self.cache.unlink(missing_ok=True)
 
 
+class TestFfmpegLocation(unittest.TestCase):
+    """yt-dlp 에는 폴더가 아니라 실행 파일 전체 경로를 넘겨야 한다.
+
+    폴더를 넘기면 yt-dlp 가 그 안에서 'ffmpeg.exe' 를 찾는데, pip 로 들어오는
+    imageio-ffmpeg 의 파일 이름은 'ffmpeg-win-x86_64-v7.1.exe' 라서
+    "ffmpeg is not installed" 로 실패한다. 실제로 사용자 PC 에서 났던 문제다.
+    """
+
+    ODD_NAME = "/fake/dir/ffmpeg-win-x86_64-v7.1.exe"
+
+    def setUp(self):
+        self.orig_which = yc.shutil.which
+        self.orig_find = yc.find_ffmpeg
+        yc.shutil.which = lambda name: None if name == "ffmpeg" else self.orig_which(name)
+        yc.find_ffmpeg = lambda: self.ODD_NAME
+        self.addCleanup(setattr, yc.shutil, "which", self.orig_which)
+        self.addCleanup(setattr, yc, "find_ffmpeg", self.orig_find)
+
+    def test_passes_full_binary_path(self):
+        args = yc._ffmpeg_location_args()
+        self.assertEqual(args, ["--ffmpeg-location", self.ODD_NAME])
+
+    def test_never_passes_the_directory(self):
+        self.assertNotIn("/fake/dir", yc._ffmpeg_location_args()[1:2] and [])
+        self.assertNotEqual(yc._ffmpeg_location_args()[1], "/fake/dir")
+
+    def test_section_command_carries_it(self):
+        ref = yc.parse_youtube_url(f"https://youtu.be/{VID}")
+        cmd = yc.build_section_command(
+            ref, yc.Segment(10, 25),
+            out_template="out/%(title)s.%(ext)s", print_file=Path("/tmp/p.txt"),
+        )
+        self.assertIn("--ffmpeg-location", cmd)
+        self.assertEqual(cmd[cmd.index("--ffmpeg-location") + 1], self.ODD_NAME)
+
+    def test_skipped_when_ffmpeg_on_path(self):
+        yc.shutil.which = lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None
+        self.assertEqual(yc._ffmpeg_location_args(), [])
+
+
+class TestJsRuntime(unittest.TestCase):
+    def setUp(self):
+        self.orig = yc.shutil.which
+        self.addCleanup(setattr, yc.shutil, "which", self.orig)
+
+    def test_deno_needs_no_flag(self):
+        yc.shutil.which = lambda n: "/usr/bin/deno" if n == "deno" else None
+        self.assertEqual(yc._js_runtime_args(), [])      # yt-dlp 기본값
+
+    def test_node_is_passed(self):
+        yc.shutil.which = lambda n: "/usr/bin/node" if n == "node" else None
+        self.assertEqual(yc._js_runtime_args(), ["--js-runtimes", "node"])
+
+    def test_none_available(self):
+        yc.shutil.which = lambda n: None
+        self.assertEqual(yc._js_runtime_args(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
