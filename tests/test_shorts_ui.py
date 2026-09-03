@@ -81,5 +81,49 @@ class TestErrorMessages(unittest.TestCase):
 
 
 
+@unittest.skipUnless(HAS_GRADIO, "gradio 미설치")
+class TestFfmpegErrorsAreDistinct(unittest.TestCase):
+    """ffmpeg 관련 오류를 '설치 안 됨' 하나로 뭉뚱그리면 원인을 못 찾는다."""
+
+    def test_missing_ffmpeg(self):
+        msg = ui.explain_error("'ffmpeg' 을(를) 찾을 수 없습니다. 설치 후 다시 실행하세요.")
+        self.assertIn("설치되어 있지 않습니다", msg)
+
+    def test_ffmpeg_run_failure_is_not_reported_as_missing(self):
+        msg = ui.explain_error("ffmpeg 실행 실패 (코드 1)\nConversion failed!")
+        self.assertNotIn("설치되어 있지", msg)
+        self.assertIn("자르다가 실패", msg)
+
+    def test_vertical_failure(self):
+        msg = ui.explain_error("세로 변환 실패\nError while filtering")
+        self.assertIn("세로 변환에 실패", msg)
+
+    def test_postprocessing_failure(self):
+        self.assertIn("합치는 단계", ui.explain_error("ERROR: Postprocessing: Error opening output"))
+
+
+@unittest.skipUnless(HAS_GRADIO, "gradio 미설치")
+class TestSystemReport(unittest.TestCase):
+    def test_report_mentions_tools(self):
+        text = ui.system_report()
+        self.assertIn("파이썬", text)
+        self.assertIn("yt-dlp", text)
+        self.assertIn("ffmpeg", text)
+
+    def test_banner_empty_when_ready(self):
+        # 이 환경에는 둘 다 있으므로 배너가 뜨면 안 된다
+        if ui.yc.find_ffmpeg() and ui.shutil.which("yt-dlp"):
+            self.assertEqual(ui.startup_banner(), "")
+
+    def test_banner_warns_when_ffmpeg_missing(self):
+        original = ui.yc.find_ffmpeg
+        ui.yc.find_ffmpeg = lambda: None
+        try:
+            self.assertIn("준비가 덜 됐습니다", ui.startup_banner())
+            self.assertIn("❌ ffmpeg 를 찾지 못했습니다", ui.system_report())
+        finally:
+            ui.yc.find_ffmpeg = original
+
+
 if __name__ == "__main__":
     unittest.main()

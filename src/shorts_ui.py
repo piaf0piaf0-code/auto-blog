@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import webbrowser
@@ -143,9 +144,20 @@ ERROR_HINTS: list[tuple[str, str]] = [
     ("HTTP Error 403",
      "유튜브가 바뀌어 다운로더가 낡았을 수 있습니다. 창을 닫았다가 **실행.bat** 을 "
      "다시 더블클릭하면 자동으로 최신 버전을 받아옵니다."),
-    ("ffmpeg",
-     "영상 처리기(ffmpeg)를 찾지 못했습니다. 창을 닫고 **실행.bat** 을 다시 "
-     "더블클릭하면 자동으로 설치됩니다."),
+    ("'ffmpeg' 을(를) 찾을 수 없습니다",
+     "영상 처리기(ffmpeg)가 설치되어 있지 않습니다. 창을 닫고 **실행.bat** 을 "
+     "다시 더블클릭하세요. 그래도 같은 문구가 나오면 화면 위의 "
+     "**[🔧 내 PC 점검]** 을 눌러 결과를 알려주세요."),
+    ("ffmpeg 실행 실패",
+     "영상을 자르다가 실패했습니다. 구간이 너무 길거나(수십 분), 저장 공간이 "
+     "부족하거나, 원본이 손상된 경우입니다. 구간을 3분 이내로 줄여 다시 "
+     "시도해보세요. 아래 [자세한 오류 내용] 을 열면 원인이 나옵니다."),
+    ("세로 변환 실패",
+     "세로 변환에 실패했습니다. 구간을 짧게 줄이거나, [숏츠 모양] 에서 "
+     "**위아래 검은 여백** 으로 바꿔 다시 시도해보세요."),
+    ("Postprocessing",
+     "내려받은 뒤 영상을 합치는 단계에서 실패했습니다. 구간을 짧게 줄여 "
+     "다시 시도해보세요."),
     ("ANTHROPIC_API_KEY",
      "Claude API 키가 없습니다. 아래 **[AI 설정]** 을 열고 키를 넣은 뒤 "
      "[저장] 을 누르세요. 키는 https://console.anthropic.com 에서 발급합니다."),
@@ -269,6 +281,80 @@ def suggestion_label(index: int, row: dict) -> str:
     )
 
 
+def system_report() -> str:
+    """지금 이 PC 에서 무엇이 준비됐는지 실제로 실행해 확인한다.
+
+    "왜 안 되는지" 를 추측하지 않기 위한 진단 화면이다.
+    """
+    lines: list[str] = []
+
+    lines.append(f"- 파이썬 {sys.version.split()[0]}  `{sys.executable}`")
+
+    # yt-dlp
+    path = shutil.which("yt-dlp")
+    if path:
+        try:
+            version = subprocess.run([path, "--version"], capture_output=True,
+                                     text=True, timeout=20).stdout.strip()
+            lines.append(f"- ✅ yt-dlp {version}")
+        except Exception as e:  # noqa: BLE001
+            lines.append(f"- ⚠️ yt-dlp 를 실행하지 못했습니다: {e}")
+    else:
+        lines.append("- ❌ yt-dlp 없음 → 실행.bat 을 다시 더블클릭하세요")
+
+    # ffmpeg: 찾기만 하지 말고 실제로 실행해본다
+    ffmpeg = yc.find_ffmpeg()
+    if not ffmpeg:
+        lines.append("- ❌ ffmpeg 를 찾지 못했습니다")
+        try:
+            import imageio_ffmpeg  # noqa: F401
+            lines.append("  - imageio-ffmpeg 는 설치돼 있는데 실행 파일이 없습니다")
+        except Exception as e:  # noqa: BLE001
+            lines.append(f"  - imageio-ffmpeg 를 불러오지 못했습니다: {e}")
+    else:
+        try:
+            first = subprocess.run([ffmpeg, "-version"], capture_output=True,
+                                   text=True, timeout=20).stdout.splitlines()[0]
+            lines.append(f"- ✅ ffmpeg  `{ffmpeg}`")
+            lines.append(f"  - {first}")
+        except Exception as e:  # noqa: BLE001
+            lines.append(f"- ⚠️ ffmpeg 는 찾았지만 실행되지 않습니다 (`{ffmpeg}`): {e}")
+
+    # 자바스크립트 런타임 (유튜브 추출에 쓰인다. 없으면 일부 화질이 빠질 수 있다)
+    runtime = yc.find_js_runtime()
+    if runtime:
+        lines.append(f"- ✅ 자바스크립트 런타임: {runtime}")
+    else:
+        lines.append(
+            "- ⚠️ 자바스크립트 런타임 없음 — 추출은 되지만 일부 화질이 빠질 수 "
+            "있습니다. 명령 프롬프트에서 `winget install DenoLand.Deno` 로 "
+            "설치하면 좋아집니다(선택)."
+        )
+
+    # 저장 공간
+    try:
+        free = shutil.disk_usage(OUT_DIR.resolve().anchor or ".").free / 1024**3
+        mark = "✅" if free >= 2 else "⚠️"
+        lines.append(f"- {mark} 저장 공간 여유 {free:.1f}GB")
+    except Exception:  # noqa: BLE001
+        pass
+
+    lines.append(f"- 저장 위치 `{OUT_DIR.resolve()}`")
+    return "\n".join(lines)
+
+
+def startup_banner() -> str:
+    """맨 위에 준비 상태를 한 줄로 보여준다."""
+    ready = yc.find_ffmpeg() is not None and shutil.which("yt-dlp") is not None
+    if ready:
+        return ""
+    return (
+        "> ❌ **준비가 덜 됐습니다.** 영상 처리기(ffmpeg) 또는 다운로더(yt-dlp)를 "
+        "찾지 못했습니다. 창을 닫고 **실행.bat** 을 다시 더블클릭하세요. "
+        "그래도 같으면 아래 **[🔧 내 PC 점검]** 결과를 알려주세요."
+    )
+
+
 def _open_folder(path: Path) -> None:
     """탐색기/파인더로 결과 폴더 열기."""
     path = Path(path).resolve()
@@ -292,6 +378,15 @@ def build_app() -> gr.Blocks:
             "링크를 넣고 → 영상을 보다가 → **[여기가 시작] / [여기가 끝]** 을 누르고 → "
             "**[클립 만들기]**. 시간은 직접 입력해도 됩니다."
         )
+
+        gr.Markdown(startup_banner())     # 준비가 안 됐을 때만 보인다
+        with gr.Accordion("🔧 내 PC 점검 (안 될 때 열어보세요)", open=False):
+            gr.Markdown(
+                "무엇이 준비됐는지 실제로 실행해서 확인합니다. "
+                "문제가 생기면 이 결과를 그대로 알려주세요."
+            )
+            check_btn = gr.Button("점검 실행")
+            check_md = gr.Markdown("")
 
         gr.Markdown("### ① 영상 불러오기")
         with gr.Row():
@@ -540,6 +635,14 @@ def build_app() -> gr.Blocks:
                 yield f"⚠️ {e}", hidden, hidden, hidden
                 return
 
+            if segment.duration > yc.SHORTS_MAX_SECONDS:
+                yield (
+                    f"⚠️ **{segment.duration / 60:.1f}분**짜리 구간입니다. "
+                    f"숏츠는 3분까지만 올라가고, 이 길이는 변환에 몇 분씩 걸리며 "
+                    f"실패하기도 쉽습니다. 그래도 진행합니다...",
+                    hidden, hidden, hidden,
+                )
+
             yield (
                 f"⏳ {segment.label} 구간을 내려받아 자르는 중입니다... "
                 "(길이·화질에 따라 수십 초 걸립니다)",
@@ -601,6 +704,7 @@ def build_app() -> gr.Blocks:
             outputs=[start_box, end_box, hook_text],
         )
         save_key_btn.click(save_api_key, inputs=api_key_box, outputs=key_status_md)
+        check_btn.click(lambda: system_report(), outputs=check_md)
 
         make_btn.click(
             on_make,
@@ -620,7 +724,10 @@ LAUNCH_KWARGS = dict(head=HEAD, theme=gr.themes.Soft())
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     if yc.find_ffmpeg() is None:
-        print("⚠️ ffmpeg 를 찾지 못했습니다. `pip install imageio-ffmpeg` 를 실행하세요.")
+        print("\n" + "=" * 52)
+        print("⚠️  영상 처리기(ffmpeg)를 찾지 못했습니다.")
+        print("   화면 위의 [🔧 내 PC 점검] 을 눌러 결과를 알려주세요.")
+        print("=" * 52)
     print("\n브라우저가 자동으로 열립니다. 안 열리면 아래 주소를 직접 여세요.")
     build_app().launch(inbrowser=True, **LAUNCH_KWARGS)
     return 0

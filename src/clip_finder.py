@@ -28,6 +28,7 @@ from .youtube_clipper import (
     Segment,
     VideoRef,
     _auth_args,
+    _js_runtime_args,
     _run,
     format_human,
     parse_youtube_url,
@@ -142,6 +143,7 @@ def fetch_subtitles(
             "--sub-format", "vtt/best",
             "--convert-subs", "vtt",
             "-o", str(out / "%(id)s.%(ext)s"),
+            *_js_runtime_args(),
             *_auth_args(cookies, cookies_from_browser),
             ref.url,
         ]
