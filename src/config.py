@@ -78,8 +78,10 @@ def get_site(key: str) -> Site:
 
 
 def require_api_key() -> str:
-    if not ANTHROPIC_API_KEY:
+    # 실행 중에 .env 를 채우는 경우(UI 에서 키 저장)도 있으므로 그때그때 읽는다.
+    key = os.getenv("ANTHROPIC_API_KEY") or ANTHROPIC_API_KEY
+    if not key:
         raise RuntimeError(
             "ANTHROPIC_API_KEY 가 설정되지 않았습니다. .env 파일을 확인하세요."
         )
-    return ANTHROPIC_API_KEY
+    return key

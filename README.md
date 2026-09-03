@@ -37,7 +37,8 @@ python -m src.run_pipeline publish --file drafts/전세자금대출-조건.md --
 
 ```
 ① 유튜브 링크 붙여넣기 → [영상 불러오기]
-② 영상을 보다가 [⏱ 여기가 시작] / [⏹ 여기가 끝]  (또는 [여기부터 30초])
+② 구간 정하기 — [🤖 AI가 골라주기] 로 제안받아 클릭하거나,
+   영상을 보다가 [⏱ 여기가 시작] / [⏹ 여기가 끝]
 ③ 숏츠 모양 고르기 (세로 9:16 변환 기본 켜짐 · 훅 문구 입력 가능)
 ④ [✂️ 클립 만들기] → [파일 저장하기]
 ```
@@ -50,6 +51,9 @@ python -m src.run_pipeline publish --file drafts/전세자금대출-조건.md --
 <summary>명령줄로 쓰기 (자동화용)</summary>
 
 ```bash
+# 자막을 읽고 숏츠용 구간 추천받기 (Claude API 키 필요)
+python -m src.run_pipeline suggest --url "https://youtu.be/XXXXXXXXXXX"
+
 # 영상 정보·챕터 확인 (다운로드 없음)
 python -m src.run_pipeline clip --url "https://youtu.be/XXXXXXXXXXX" --info
 
@@ -96,6 +100,7 @@ auto-blog/
 │   ├── keyword_planner.py # Claude 기반 키워드 기회 발굴
 │   ├── content_brief.py   # 검색의도 기반 콘텐츠 초안 생성
 │   ├── wordpress_publisher.py # 워드프레스 REST API 발행
+│   ├── clip_finder.py     # 자막 읽고 AI 가 구간 추천 (숏츠 0단계)
 │   ├── youtube_clipper.py # 유튜브 구간 추출 (숏츠 1단계)
 │   ├── vertical.py        # 9:16 세로 변환 + 훅 문구 (숏츠 2단계)
 │   ├── shorts_ui.py       # 위 기능의 노코드 웹 화면

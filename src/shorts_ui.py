@@ -19,6 +19,7 @@ from pathlib import Path
 
 import gradio as gr
 
+from . import clip_finder, config
 from . import vertical as vt
 from . import youtube_clipper as yc
 
@@ -145,6 +146,13 @@ ERROR_HINTS: list[tuple[str, str]] = [
     ("ffmpeg",
      "영상 처리기(ffmpeg)를 찾지 못했습니다. 창을 닫고 **실행.bat** 을 다시 "
      "더블클릭하면 자동으로 설치됩니다."),
+    ("ANTHROPIC_API_KEY",
+     "Claude API 키가 없습니다. 아래 **[AI 설정]** 을 열고 키를 넣은 뒤 "
+     "[저장] 을 누르세요. 키는 https://console.anthropic.com 에서 발급합니다."),
+    ("credit balance",
+     "Claude API 잔액이 부족합니다. console.anthropic.com 에서 결제 수단을 등록해주세요."),
+    ("authentication_error",
+     "Claude API 키가 올바르지 않습니다. [AI 설정] 에서 키를 다시 넣어주세요."),
     ("폰트",
      "한글 폰트를 찾지 못해 문구를 넣을 수 없습니다. **영상에 넣을 문구**를 비우고 "
      "다시 시도하거나, 나눔고딕을 설치해주세요."),
@@ -220,6 +228,47 @@ def duration_label(start: str, end: str) -> str:
     return f"길이 **{secs:.1f}초** — {note}"
 
 
+
+ENV_PATH = Path(".env")
+
+
+def save_api_key(key: str) -> str:
+    """입력받은 Claude API 키를 .env 에 저장한다 (.env 는 git 에 올라가지 않는다)."""
+    key = (key or "").strip()
+    if not key:
+        return "키를 입력해주세요."
+    if not key.startswith("sk-"):
+        return "⚠️ 키 형식이 올바르지 않습니다. `sk-ant-` 로 시작하는 키를 넣어주세요."
+
+    lines = []
+    if ENV_PATH.exists():
+        lines = [
+            l for l in ENV_PATH.read_text(encoding="utf-8").splitlines()
+            if not l.startswith("ANTHROPIC_API_KEY=")
+        ]
+    lines.append(f"ANTHROPIC_API_KEY={key}")
+    ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.environ["ANTHROPIC_API_KEY"] = key
+    return "✅ 저장했습니다. 이제 [AI가 골라주기] 를 쓸 수 있습니다."
+
+
+def api_key_ready() -> bool:
+    try:
+        config.require_api_key()
+        return True
+    except RuntimeError:
+        return False
+
+
+def suggestion_label(index: int, row: dict) -> str:
+    """추천 한 줄을 선택지 문구로."""
+    seg = yc.Segment(row["start"], row["end"])
+    return (
+        f"{index}. {seg.label} ({seg.duration:.0f}초) · 적합도 {row['score']}/10"
+        f" — {row['title']}"
+    )
+
+
 def _open_folder(path: Path) -> None:
     """탐색기/파인더로 결과 폴더 열기."""
     path = Path(path).resolve()
@@ -263,6 +312,17 @@ def build_app() -> gr.Blocks:
 
         gr.Markdown("### ② 구간 정하기")
         with gr.Row():
+            suggest_btn = gr.Button(
+                "🤖 AI가 골라주기 — 자막을 읽고 훅이 될 구간을 제안합니다",
+                variant="secondary",
+            )
+        suggest_md = gr.Markdown("")
+        suggest_radio = gr.Radio(label="추천 구간 (고르면 시간이 채워집니다)",
+                                 choices=[], visible=False, interactive=True)
+        plan_state = gr.State([])
+
+        gr.Markdown("**직접 정하기** — 영상을 보다가 누르세요")
+        with gr.Row():
             mark_start = gr.Button("⏱ 여기가 시작")
             mark_end = gr.Button("⏹ 여기가 끝")
             span15 = gr.Button("여기부터 15초")
@@ -299,6 +359,20 @@ def build_app() -> gr.Blocks:
                 value="top",
                 scale=2,
             )
+
+        with gr.Accordion("AI 설정 (구간 추천에 필요)", open=False):
+            gr.Markdown(
+                "Claude API 키가 있어야 [AI가 골라주기] 를 쓸 수 있습니다. "
+                "https://console.anthropic.com 에서 발급받아 붙여넣으세요. "
+                "키는 이 컴퓨터의 `.env` 파일에만 저장됩니다."
+            )
+            with gr.Row():
+                api_key_box = gr.Textbox(
+                    label="Claude API 키", type="password",
+                    placeholder="sk-ant-...", scale=4,
+                )
+                save_key_btn = gr.Button("저장", scale=1)
+            key_status_md = gr.Markdown("")
 
         with gr.Accordion("고급 설정", open=False):
             with gr.Row():
@@ -387,6 +461,69 @@ def build_app() -> gr.Blocks:
         for box in (start_box, end_box):
             box.change(duration_label, inputs=[start_box, end_box], outputs=length_md)
 
+
+        # ── AI 구간 추천 ──
+        def on_suggest(url, cookies_browser, info):
+            hidden = gr.update(visible=False)
+            if not str(url).strip():
+                yield "⚠️ 링크를 먼저 넣어주세요.", hidden, []
+                return
+            if not api_key_ready():
+                yield (
+                    "⚠️ Claude API 키가 없습니다. 아래 **[AI 설정]** 을 열고 "
+                    "키를 넣어주세요.",
+                    hidden, [],
+                )
+                return
+
+            yield "⏳ 자막을 받아 읽는 중입니다... (30초~1분 걸립니다)", hidden, []
+            try:
+                plan, language = clip_finder.suggest_clips(
+                    url,
+                    count=5,
+                    duration=(info or {}).get("duration"),
+                    cookies_from_browser=(
+                        None if cookies_browser == "사용 안 함" else cookies_browser
+                    ),
+                )
+            except Exception as e:  # noqa: BLE001 - 사용자에게 안내로 바꿔 보여준다
+                yield explain_error(e), hidden, []
+                return
+
+            rows = [
+                {
+                    "start": s.start_seconds, "end": s.end_seconds,
+                    "title": s.title, "hook": s.hook_text,
+                    "score": s.score, "reason": s.reason,
+                }
+                for s in plan.suggestions
+            ]
+            choices = [(suggestion_label(i, r), i - 1) for i, r in enumerate(rows, 1)]
+
+            lines = [f"**영상 요약** — {plan.video_summary}", ""]
+            for i, r in enumerate(rows, 1):
+                lines.append(f"{i}. {r['reason']}")
+            lines += [
+                "",
+                f"> ⚠️ 자막({language})만 읽고 낸 추천입니다. 화면에 무엇이 나오는지는 "
+                "모릅니다. 만든 뒤 미리보기로 꼭 확인하세요.",
+            ]
+            yield (
+                "\n".join(lines),
+                gr.update(choices=choices, visible=True, value=None),
+                rows,
+            )
+
+        def on_pick(choice, rows):
+            if choice is None or not rows:
+                return gr.update(), gr.update(), gr.update()
+            row = rows[int(choice)]
+            return (
+                yc.format_human(row["start"]),
+                yc.format_human(row["end"]),
+                row["hook"],
+            )
+
         # ── 클립 만들기 ──
         def on_make(url, start, end, quality, audio_only, fast, cookies_browser,
                     vertical, vmode, hook_text, text_pos):
@@ -452,6 +589,18 @@ def build_app() -> gr.Blocks:
                 gr.update(value=str(path), visible=True),
                 gr.update(visible=True),
             )
+
+        suggest_btn.click(
+            on_suggest,
+            inputs=[url_box, cookies_browser, info_state],
+            outputs=[suggest_md, suggest_radio, plan_state],
+        )
+        suggest_radio.change(
+            on_pick,
+            inputs=[suggest_radio, plan_state],
+            outputs=[start_box, end_box, hook_text],
+        )
+        save_key_btn.click(save_api_key, inputs=api_key_box, outputs=key_status_md)
 
         make_btn.click(
             on_make,

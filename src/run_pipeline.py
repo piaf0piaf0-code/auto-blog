@@ -7,6 +7,7 @@
     python -m src.run_pipeline sites
     python -m src.run_pipeline clip --url "https://youtu.be/XXXXXXXXXXX" --start 1:30 --end 2:10
     python -m src.run_pipeline clip --url "https://youtu.be/XXXXXXXXXXX" --start 1:30 --duration 45 --vertical
+    python -m src.run_pipeline suggest --url "https://youtu.be/XXXXXXXXXXX"
 """
 from __future__ import annotations
 
@@ -170,6 +171,33 @@ def cmd_clip(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_suggest(args: argparse.Namespace) -> int:
+    """자막을 읽고 숏츠로 쓸 구간을 Claude 에게 추천받는다."""
+    from . import clip_finder, youtube_clipper as yc
+
+    ref = yc.parse_youtube_url(args.url)
+    print(f"[구간 추천] {ref.url}")
+    print("  자막을 받아 읽는 중입니다... (영상 길이에 따라 수십 초)")
+
+    duration = None
+    try:
+        duration = yc.probe(ref.url, cookies_from_browser=args.cookies_from_browser).get("duration")
+    except yc.ClipError:
+        pass
+
+    plan, language = clip_finder.suggest_clips(
+        ref.url,
+        count=args.count,
+        duration=duration,
+        cookies=args.cookies,
+        cookies_from_browser=args.cookies_from_browser,
+    )
+    print()
+    print(clip_finder.format_plan(plan, language))
+    print("⚠️ 자막(말)만 보고 낸 추천입니다. 화면 내용은 미리보기로 확인하세요.")
+    return 0
+
+
 def cmd_sites(_: argparse.Namespace) -> int:
     print("등록된 워드프레스 사이트:\n")
     for key, site in config.SITES.items():
@@ -258,6 +286,17 @@ def build_parser() -> argparse.ArgumentParser:
     pc.add_argument("--info", action="store_true", help="다운로드 없이 제목·길이·챕터만 확인")
     pc.add_argument("--dry-run", action="store_true", help="실행할 명령만 출력")
     pc.set_defaults(func=cmd_clip)
+
+    pg = sub.add_parser(
+        "suggest",
+        help="자막을 읽고 숏츠용 구간을 AI 가 추천 (Claude API 키 필요)",
+        description="유튜브 자막을 Claude 에게 넘겨 훅이 될 만한 구간을 제안받는다.",
+    )
+    pg.add_argument("--url", required=True, help="유튜브 링크 또는 영상 ID")
+    pg.add_argument("--count", type=int, default=5, help="추천받을 구간 수 (기본 5)")
+    pg.add_argument("--cookies", help="쿠키 파일 경로")
+    pg.add_argument("--cookies-from-browser", help="브라우저에서 쿠키 사용 (예: chrome)")
+    pg.set_defaults(func=cmd_suggest)
 
     ps = sub.add_parser("sites", help="등록된 사이트 목록")
     ps.set_defaults(func=cmd_sites)

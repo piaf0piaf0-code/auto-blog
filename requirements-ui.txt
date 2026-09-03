@@ -4,3 +4,8 @@
 yt-dlp>=2025.1.1
 gradio>=6.0
 imageio-ffmpeg>=0.5   # ffmpeg 를 따로 설치하지 않아도 되게 해주는 내장본
+
+# AI 구간 추천 (src/clip_finder.py)
+anthropic>=0.69.0
+pydantic>=2.7.0
+python-dotenv>=1.0.1
