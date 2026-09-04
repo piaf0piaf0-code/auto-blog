@@ -878,6 +878,18 @@ function 표구분줄인가(줄) {
 }
 
 /** 마이 GPT 마크다운을 발행용 HTML 로 바꾼다. */
+/**
+ * 표 모양.
+ *
+ * 티스토리 편집기는 <style> 덩어리를 지워 버린다. 각 칸에 style= 로
+ * 직접 써 넣어야 테두리가 남는다. 워드프레스도 이 방식이면 그대로 나온다.
+ * 넓은 표가 휴대폰에서 잘리지 않도록 가로 스크롤 상자로 감싼다.
+ */
+var 표겉모양   = 'width:100%;border-collapse:collapse;margin:18px 0;font-size:15px;line-height:1.6;';
+var 표머리모양 = 'border:1px solid #d5d8dd;background:#f5f6f8;padding:10px 12px;text-align:left;font-weight:700;';
+var 표칸모양   = 'border:1px solid #d5d8dd;padding:10px 12px;vertical-align:top;';
+var 표상자모양 = 'overflow-x:auto;-webkit-overflow-scrolling:touch;';
+
 function 마크다운을HTML로(마크다운) {
   var 줄들 = String(마크다운 || '').split('\n');
   var 나온것 = [], 목록열림 = false, 문단 = [], 표 = [];
@@ -903,22 +915,24 @@ function 마크다운을HTML로(마크다운) {
     모은것 = 모은것.filter(function (줄) { return !표구분줄인가(줄); });
     if (!머리 && !모은것.length) return;
 
-    var 조각 = ['<table>'];
+    var 조각 = ['<div style="' + 표상자모양 + '">',
+                '<table style="' + 표겉모양 + '">'];
     if (머리) {
       조각.push('<thead><tr>' + 머리.map(function (칸) {
-        return '<th>' + 인라인(칸) + '</th>';
+        return '<th style="' + 표머리모양 + '">' + 인라인(칸) + '</th>';
       }).join('') + '</tr></thead>');
     }
     if (모은것.length) {
       조각.push('<tbody>');
       모은것.forEach(function (줄) {
         조각.push('<tr>' + 표칸나누기(줄).map(function (칸) {
-          return '<td>' + 인라인(칸) + '</td>';
+          return '<td style="' + 표칸모양 + '">' + 인라인(칸) + '</td>';
         }).join('') + '</tr>');
       });
       조각.push('</tbody>');
     }
     조각.push('</table>');
+    조각.push('</div>');
     나온것.push(조각.join('\n'));
   }
 
