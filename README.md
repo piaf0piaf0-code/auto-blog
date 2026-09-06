@@ -46,6 +46,9 @@ python -m src.run_pipeline publish --file drafts/전세자금대출-조건.md --
 자동으로 설치됩니다. 파이썬만 미리 깔려 있으면 됩니다
 (설치 시 **"Add python.exe to PATH" 체크**).
 
+새 버전이 나오면 **`업데이트.bat`** 을 더블클릭하세요. 브라우저를 거치지 않고
+최신 파일만 받아 바꾼 뒤 바로 실행합니다. 만든 영상과 설정은 그대로 둡니다.
+
 <details>
 <summary>명령줄로 쓰기 (자동화용)</summary>
 
@@ -101,6 +104,7 @@ auto-blog/
 │   ├── shorts_ui.py       # 위 기능의 노코드 웹 화면
 │   └── run_pipeline.py    # CLI 진입점
 ├── 실행.bat               # Windows: 더블클릭하면 숏츠 추출 화면이 열린다
+├── 업데이트.bat           # 최신 버전으로 갱신 후 바로 실행
 ├── tests/                 # 단위 테스트 (python -m unittest discover -s tests)
 ├── drafts/                # 생성된 초안 (검수 대기) — git 미추적
 ├── outputs/               # 추출한 클립·원본 — git 미추적
