@@ -348,7 +348,7 @@ def visible_text_locator(page: Any, texts: list[str]):
     return None
 
 
-def wait_for_editor_or_login(page: Any) -> None:
+def wait_for_editor_or_login(page: Any, write_url: str = "") -> None:
     title_selectors = [
         "textarea[placeholder*='제목']",
         "input[placeholder*='제목']",
@@ -383,10 +383,15 @@ def wait_for_editor_or_login(page: Any) -> None:
     print("     https://finwiz.tistory.com/manage/newpost/")
     print("  3) 제목 입력칸이 보이면 그대로 두세요. 알아서 이어집니다.")
     print(f"  (지금 브라우저 주소: {지금주소 or '알 수 없음'})")
+    if write_url:
+        print(f"  (로그인만 하시면 됩니다. 주소 이동은 이쪽에서 다시 시도합니다: {write_url})")
     print(f"  최대 {int(기다릴초)}초 기다립니다. Enter 를 누를 필요는 없습니다.")
     print("=" * 58)
 
+    # 로그인이 끝나도 이 페이지는 되돌려진 주소에 그대로 머문다.
+    # 그래서 몇 초에 한 번씩 글쓰기 주소로 다시 가 본다.
     마감 = time.time() + 기다릴초
+    다음이동 = 0.0
     while time.time() < 마감:
         for selector in title_selectors:
             try:
@@ -395,6 +400,12 @@ def wait_for_editor_or_login(page: Any) -> None:
                 return
             except Exception:
                 continue
+        if write_url and time.time() >= 다음이동:
+            다음이동 = time.time() + 8
+            try:
+                page.goto(write_url, wait_until="domcontentloaded", timeout=20000)
+            except Exception:
+                pass
     raise RuntimeError(
         "티스토리 글쓰기 제목 입력칸을 찾지 못했습니다. "
         "이 브라우저 프로필의 티스토리 로그인이 풀린 것 같습니다."
@@ -1252,7 +1263,7 @@ def save_tistory_draft_with_browser(
     hosted_thumbnail_url = upload_tistory_thumbnail_via_wordpress(item, thumbnail_path, target_config)
 
     page.goto(write_url, wait_until="domcontentloaded", timeout=60000)
-    wait_for_editor_or_login(page)
+    wait_for_editor_or_login(page, write_url)
     select_tistory_category(page, tistory_category_candidates(item, target_url, target_config))
     fill_title(page, item.tistory_title or item.title)
     editor_type = set_editor_html(page, content_html)
