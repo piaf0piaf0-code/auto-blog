@@ -82,6 +82,71 @@ def tistory_category_label(item: DraftItem, target_url: str) -> str:
     return "도움 되는 정보"
 
 
+def finwiz_category_candidates(item: DraftItem) -> list[str]:
+    """finwiz 글에 어울리는 티스토리 카테고리를 우선순위대로 돌려준다.
+
+    티스토리에 없는 이름은 select_tistory_category 가 알아서 건너뛴다.
+    나중에 카테고리를 새로 만들면 코드를 고치지 않아도 그쪽으로 붙는다.
+    """
+    글 = f"{item.keyword} {item.tistory_title or item.title}"
+
+    def 있나(*말들: str) -> bool:
+        return any(말 in 글 for 말 in 말들)
+
+    후보: list[str] = []
+    if 있나("자동차", "차량", "중고차", "오토론", "할부"):
+        후보 += ["자동차대출"]
+    if 있나("무직자", "백수", "직업 없", "무소득", "소득없음", "소득 없"):
+        후보 += ["무직자대출"]
+    if 있나("소액", "비상금", "100만", "300만", "500만", "30만", "50만",
+             "당일대출", "당일 대출", "즉시대출", "비대면", "캐피탈", "대부"):
+        후보 += ["소액대출"]
+    if 있나("전세", "임차", "보증금", "버팀목"):
+        후보 += ["전세대출", "청년전세대출"]
+    if 있나("청년", "사회초년생", "대학생"):
+        후보 += ["청년대출", "청년 주거지원"]
+    if 있나("신혼", "신생아", "출산"):
+        후보 += ["신혼부부대출"]
+    if 있나("디딤돌", "보금자리", "주택담보", "주담대", "생애최초", "주택구입"):
+        후보 += ["주택담보대출", "주택구입대출"]
+    if 있나("햇살론", "정책", "서민금융", "정부지원", "미소금융", "새희망",
+             "생활안정", "근로복지", "장학재단", "불법사금융", "중금리", "지원제도"):
+        후보 += ["정부지원대출", "서민금융"]
+    if 있나("DSR", "dsr", "신용점수", "신용등급", "대환", "갈아타기",
+             "금리인하", "대출금리", "금리 비교", "연소득", "원천징수",
+             "신용불량", "신용조회", "연체"):
+        후보 += ["신용대출", "신용관리"]
+    if 있나("사업자", "소상공인", "직장인", "프리랜서"):
+        후보 += ["직장인·사업자대출", "사업자대출"]
+
+    # 끝까지 못 고르면 넓은 이름만 시도한다.
+    # 여기에 '소액대출' 같은 실제 카테고리를 넣으면 안 맞는 글까지 전부
+    # 그 하나로 몰린다(실제로 167편 중 146편이 그렇게 몰렸다).
+    # 아무것도 못 고르면 '카테고리 없음' 인 채로 두는 편이 낫다.
+    후보 += ["대출정보", "대출"]
+
+    본것: set[str] = set()
+    정리: list[str] = []
+    for 이름 in 후보:
+        if 이름 in 본것:
+            continue
+        본것.add(이름)
+        정리.append(이름)
+    return 정리
+
+
+def tistory_category_candidates(
+    item: DraftItem, target_url: str, target_config: dict[str, Any]
+) -> list[str]:
+    """설정에 적힌 카테고리를 먼저 쓰고, 없으면 주제로 고른다."""
+    설정 = configured_tistory_category_label(item, target_url, target_config)
+    if 설정:
+        return [설정]
+    if normalized_host(target_url) == "finwiz.tistory.com":
+        return finwiz_category_candidates(item)
+    return []
+
+
 def configured_tistory_category_label(item: DraftItem, target_url: str, target_config: dict[str, Any]) -> str:
     """Use an explicitly configured category first, then the topic-based default."""
     target_host = normalized_host(target_url)
@@ -336,8 +401,15 @@ def fill_title(page: Any, title: str) -> None:
     raise RuntimeError("티스토리 제목 입력칸을 찾지 못했습니다.")
 
 
-def select_tistory_category(page: Any, category_label: str) -> bool:
-    if not category_label:
+def select_tistory_category(page: Any, category_label: Any) -> bool:
+    """카테고리를 고른다.
+
+    후보를 여러 개 받아 목록에 실제로 있는 첫 번째 것을 고른다.
+    하나도 없으면 '카테고리 없음' 인 채로 두고 넘어간다. 여기서 멈추지 않는다.
+    """
+    후보들 = [category_label] if isinstance(category_label, str) else list(category_label or [])
+    후보들 = [str(이름).strip() for 이름 in 후보들 if str(이름).strip()]
+    if not 후보들:
         return False
 
     try:
@@ -375,13 +447,38 @@ def select_tistory_category(page: Any, category_label: str) -> bool:
             logging.warning("티스토리 카테고리 선택 상자를 찾지 못했습니다.")
             return False
         page.wait_for_timeout(500)
-        option = page.get_by_text(category_label, exact=True).last
-        option.wait_for(state="visible", timeout=3000)
-        option.click(timeout=3000)
-        logging.info("티스토리 카테고리 선택 완료: %s", category_label)
-        return True
+        for 이름 in 후보들:
+            try:
+                option = page.get_by_text(이름, exact=True).last
+                option.wait_for(state="visible", timeout=1200)
+                option.click(timeout=2000)
+                logging.info("티스토리 카테고리 선택 완료: %s", 이름)
+                return True
+            except Exception:
+                continue
+
+        보이는것 = []
+        try:
+            보이는것 = page.locator("li, [role='option'], a, button").evaluate_all(
+                """
+                (elements) => elements
+                    .filter((element) => {
+                        const rect = element.getBoundingClientRect();
+                        return rect.width > 10 && rect.height > 5 && rect.bottom > 0;
+                    })
+                    .map((element) => element.textContent.trim())
+                    .filter((text) => text && text.length < 30)
+                    .slice(0, 25)
+                """
+            )
+        except Exception:
+            pass
+        logging.warning(
+            "티스토리 카테고리를 고르지 못했습니다. 찾던 이름: %s / 목록에 보이는 것: %s",
+            후보들, 보이는것)
+        return False
     except Exception as exc:
-        logging.warning("티스토리 카테고리 선택 실패(%s): %s", category_label, exc)
+        logging.warning("티스토리 카테고리 선택 실패(%s): %s", 후보들, exc)
         return False
 
 
@@ -975,6 +1072,126 @@ def set_tistory_representative_image(page: Any, image_path: Path | None) -> bool
     return False
 
 
+# ══════════════════════════════════════════════════════════
+#  홈주제 (발행 설정 안의 '홈주제')
+#
+#  티스토리 홈에서 이 글이 어느 분류로 노출될지 정한다.
+#  대출·정책금융 글은 '시사·지식 > 경제' 가 맞다.
+#  '경영·직장' 은 직장인 대상이라 무직자 대출 글과 안 맞는다.
+#
+#  다른 값으로 하고 싶으면 .env 에 TISTORY_HOME_TOPIC=원하는이름
+#  빈 값으로 두면 홈주제를 건드리지 않는다.
+# ══════════════════════════════════════════════════════════
+
+def tistory_home_topic() -> str:
+    return os.getenv("TISTORY_HOME_TOPIC", "경제").strip()
+
+
+def set_tistory_home_topic(page: Any, topic: str) -> bool:
+    """발행 설정 안의 홈주제를 고른다. 실패해도 임시저장은 계속한다."""
+    if not topic:
+        return False
+
+    def 지금값() -> str:
+        try:
+            return page.evaluate(
+                """
+                () => {
+                    const labels = Array.from(document.querySelectorAll('*'))
+                        .filter((element) => element.children.length === 0
+                            && (element.textContent || '').trim() === '\ud648\uc8fc\uc81c');
+                    for (const label of labels) {
+                        const row = label.parentElement;
+                        if (!row) continue;
+                        const text = (row.textContent || '').replace('\ud648\uc8fc\uc81c', '').trim();
+                        if (text) return text;
+                    }
+                    return '';
+                }
+                """
+            ) or ""
+        except Exception:
+            return ""
+
+    이미 = 지금값()
+    if topic and topic in 이미:
+        logging.info("티스토리 홈주제가 이미 '%s' 입니다.", topic)
+        return True
+
+    # 홈주제 옆의 선택 상자를 연다
+    try:
+        열림 = page.evaluate(
+            """
+            () => {
+                const labels = Array.from(document.querySelectorAll('*'))
+                    .filter((element) => element.children.length === 0
+                        && (element.textContent || '').trim() === '\ud648\uc8fc\uc81c');
+                for (const label of labels) {
+                    const row = label.parentElement;
+                    if (!row) continue;
+                    const targets = Array.from(row.querySelectorAll('button, a, select, div, span'))
+                        .filter((element) => {
+                            const rect = element.getBoundingClientRect();
+                            return rect.width > 20 && rect.height > 10
+                                && (element.textContent || '').trim() !== '\ud648\uc8fc\uc81c';
+                        });
+                    if (targets.length) {
+                        targets[0].click();
+                        return true;
+                    }
+                }
+                return false;
+            }
+            """
+        )
+    except Exception as exc:
+        logging.warning("티스토리 홈주제 상자를 열지 못했습니다: %s", exc)
+        return False
+
+    if not 열림:
+        logging.warning("티스토리 홈주제 상자를 찾지 못했습니다.")
+        return False
+    page.wait_for_timeout(700)
+
+    # 목록에서 고른다. 항목 앞에 '- ' 가 붙어 보일 수 있어 기호를 떼고 맞춘다.
+    try:
+        골랐나 = page.evaluate(
+            """
+            (topic) => {
+                const clean = (text) => (text || '').replace(/[\s\u00b7\u2010-\u2015\-]/g, '');
+                const target = clean(topic);
+                const items = Array.from(
+                    document.querySelectorAll("li, [role='option'], button, a, span, div"));
+                for (const element of items) {
+                    if (element.children.length > 1) continue;
+                    if (clean(element.textContent) !== target) continue;
+                    const rect = element.getBoundingClientRect();
+                    if (rect.width < 10 || rect.height < 5) continue;
+                    element.click();
+                    return true;
+                }
+                return false;
+            }
+            """,
+            topic,
+        )
+    except Exception as exc:
+        logging.warning("티스토리 홈주제 '%s' 를 고르지 못했습니다: %s", topic, exc)
+        return False
+
+    page.wait_for_timeout(700)
+    if not 골랐나:
+        logging.warning("티스토리 홈주제 목록에서 '%s' 를 찾지 못했습니다.", topic)
+        return False
+
+    확인 = 지금값()
+    if topic in 확인:
+        logging.info("티스토리 홈주제 설정 완료: %s", topic)
+        return True
+    logging.warning("티스토리 홈주제를 눌렀지만 '%s' 로 바뀌지 않았습니다. 지금 값: %s", topic, 확인)
+    return False
+
+
 def click_draft_save(page: Any) -> None:
     close_tistory_publish_settings(page)
     candidates = ["임시저장", "임시 저장", "저장"]
@@ -1010,7 +1227,7 @@ def save_tistory_draft_with_browser(
 
     page.goto(write_url, wait_until="domcontentloaded", timeout=60000)
     wait_for_editor_or_login(page)
-    select_tistory_category(page, configured_tistory_category_label(item, target_url, target_config))
+    select_tistory_category(page, tistory_category_candidates(item, target_url, target_config))
     fill_title(page, item.tistory_title or item.title)
     editor_type = set_editor_html(page, content_html)
     logging.info("티스토리 본문 입력 완료: editor=%s", editor_type)
@@ -1041,6 +1258,9 @@ def save_tistory_draft_with_browser(
     logging.info("티스토리 본문 임시저장 완료. 대표이미지 설정을 이어갑니다.")
     if not set_tistory_representative_image(page, thumbnail_path):
         raise RuntimeError("티스토리 대표이미지를 설정하지 못했습니다.")
+    # 발행 설정 화면이 열려 있는 지금이 홈주제를 고를 자리다.
+    # 실패해도 글은 그대로 임시저장한다. 홈주제는 나중에 손으로 바꿀 수 있다.
+    set_tistory_home_topic(page, tistory_home_topic())
     # Representative-image selection changes the draft after the first save.
     # Save once more after closing the panel so the selection is persisted.
     click_draft_save(page)
