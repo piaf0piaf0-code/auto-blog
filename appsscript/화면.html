@@ -375,14 +375,40 @@ function 메모칸(메모) {
        + 줄 + '</ul></div>';
 }
 
+/**
+ * 구글 계정이 여러 개 로그인된 창에서 사이드바를 열면 이 오류가 난다.
+ * 원래 문구('스토리지에서 읽는 중에 서버 오류... PERMISSION_DENIED')는
+ * 무엇을 해야 할지 알려주지 않으므로, 해결 방법으로 바꿔서 보여준다.
+ */
+function 계정문제인가(글) {
+  return /PERMISSION_DENIED|스토리지에서 읽는 중|권한이 없|Authorization is required/i.test(글);
+}
+
+function 계정안내HTML() {
+  return '<div class="오류">'
+    + '<b>구글 계정이 여러 개 로그인되어 있습니다.</b><br>'
+    + '이 창에 계정이 둘 이상이면 화면이 어느 계정으로 열릴지 몰라 막힙니다. '
+    + '코드 문제가 아닙니다.'
+    + '<div style="margin-top:8px"><b>지금 바로 되는 방법</b><ul>'
+    + '<li><b>Ctrl + Shift + N</b> 으로 시크릿(InPrivate) 창 열기</li>'
+    + '<li>그 창에서 <b>구글 계정 하나만</b> 로그인</li>'
+    + '<li>시트를 다시 열고 이 화면을 열기</li>'
+    + '</ul></div>'
+    + '<div style="margin-top:6px"><b>다시 안 겪으려면</b><ul>'
+    + '<li>브라우저 오른쪽 위 프로필 사진 → <b>다른 프로필 추가</b></li>'
+    + '<li>새 창에 블로그용 계정 하나만 로그인하고, 시트를 즐겨찾기</li>'
+    + '<li>앞으로 블로그 일은 그 창에서만 하기</li>'
+    + '</ul></div></div>';
+}
+
 function 오류표시(e) {
   var 글 = (e && e.message) ? e.message : String(e);
-  document.getElementById('알림').innerHTML =
-    '<div class="오류"><b>문제가 생겼습니다.</b><br>'
-    + 글.replace(/\n/g, '<br>') + '</div>';
-  document.getElementById('목록안내').innerHTML =
-    '<div class="오류"><b>문제가 생겼습니다.</b><br>'
-    + 글.replace(/\n/g, '<br>') + '</div>';
+  var 상자 = 계정문제인가(글)
+    ? 계정안내HTML()
+    : '<div class="오류"><b>문제가 생겼습니다.</b><br>'
+      + 글.replace(/\n/g, '<br>') + '</div>';
+  document.getElementById('알림').innerHTML = 상자;
+  document.getElementById('목록안내').innerHTML = 상자;
 }
 
 목록불러오기();

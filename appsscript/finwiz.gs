@@ -458,6 +458,20 @@ function finwiz날짜글자(값) {
   return String(값).trim().substring(0, 10);
 }
 
+/**
+ * 봇이 준 출처 칸에서 주소만 뽑는다.
+ * `[주소](주소)` 나 `제목 | 주소` 처럼 써 주는 일이 있어 그대로 두면 두 번 들어간다.
+ */
+function finwiz주소만(글자) {
+  var 값 = String(글자 || '').trim();
+  if (!값) return '';
+  var m = /\((https?:\/\/[^)\s]+)\)/.exec(값);      // [무엇](주소)
+  if (m) return m[1];
+  m = /(https?:\/\/[^\s|)\]]+)/.exec(값);            // 글 안의 첫 주소
+  if (m) return m[1];
+  return 값;
+}
+
 /** 기준일로부터 며칠 지났나. 모르면 -1. */
 function finwiz며칠지났나(기준일) {
   var 글자 = finwiz날짜글자(기준일);
@@ -576,7 +590,7 @@ function finwiz사실카드저장(클러스터, 답변) {
     if (!칸[0] || !칸[1]) return;
     if (/^https?:/.test(칸[0])) return;
     줄들.push([클러스터, 칸[0], 칸[1],
-               finwiz날짜글자(칸[2] || ''), String(칸[3] || '').trim()]);
+               finwiz날짜글자(칸[2] || ''), finwiz주소만(칸[3])]);
   });
 
   if (!줄들.length) {
