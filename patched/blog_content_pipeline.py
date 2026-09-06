@@ -38,6 +38,14 @@ from gspread.exceptions import WorksheetNotFound
 from openai import OpenAI
 from serpapi_budget import reserve_serpapi_slot
 
+# 꿈해몽 글에 지난 글 링크를 넣는 도우미. 파일이 없어도 나머지는 그대로 돈다.
+try:
+    import dream_links
+except Exception as _꿈링크오류:  # pragma: no cover
+    dream_links = None
+    logging.getLogger(__name__).info(
+        "dream_links.py 가 없어 꿈해몽 지난 글 링크는 건너뜁니다: %s", _꿈링크오류)
+
 
 SPREADSHEET_ID = "15bzAktttxB3aQNwzWnAvWhtIDiyL1NhIKlZpASUrnT8"
 DEFAULT_MODEL = "gpt-5"
@@ -1376,6 +1384,14 @@ def build_dream_user_prompt_v2(
         if part and "확인 실패" not in part and "참고자료 없음" not in part
     ) or "(참고자료 없음 - 상담 경험을 바탕으로 쓰되, 통계나 출처를 지어내지 마세요.)"
 
+    # 이미 발행한 꿈 글 중 관련 있는 것을 골라 본문에 넣게 한다.
+    링크블록 = ""
+    if dream_links is not None:
+        try:
+            링크블록 = dream_links.요청문블록(dream_links.관련글고르기(keyword, ""))
+        except Exception as 오류:
+            logging.warning("꿈해몽 지난 글 링크를 준비하지 못했습니다: %s", 오류)
+
     return f"""
 꿈 주제: {keyword}
 
@@ -1384,6 +1400,8 @@ def build_dream_user_prompt_v2(
 
 참고 자료:
 {참고}
+
+{링크블록}
 
 [이 글의 짜임]
 
@@ -2652,6 +2670,21 @@ def run_pipeline(credentials_path: str, spreadsheet_id: str, openai_key: str, mo
                         logging.warning("티스토리 전용 글 생성 실패, 워드프레스 글만 저장합니다: %s / %s", item.keyword, exc)
 
             output_link = item.source_link if is_saega2_health_news_item(item.category, item.source_link) else research.link
+
+            # 꿈해몽: 요청문에 넣은 지난 글 링크가 본문에 빠졌으면 직접 채운다.
+            if dream_links is not None and item.category == "꿈해몽":
+                try:
+                    관련글 = dream_links.관련글고르기(
+                        item.keyword, article.title, spreadsheet=spreadsheet)
+                    새본문, 채운것 = dream_links.링크채우기(article.html, 관련글)
+                    if 채운것:
+                        logging.info(
+                            "꿈해몽 지난 글 링크 %s개를 직접 넣었습니다: %s",
+                            len(채운것), 채운것)
+                        article = GeneratedArticle(article.title, article.meta, 새본문)
+                except Exception as 오류:
+                    logging.warning("꿈해몽 지난 글 링크를 넣지 못했습니다: %s", 오류)
+
             update_today_article(item, article, output_link, tistory_article)
             logging.info("글 생성 완료: %s", item.keyword)
         except Exception as exc:
