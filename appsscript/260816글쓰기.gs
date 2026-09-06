@@ -890,6 +890,15 @@ var 표머리모양 = 'border:1px solid #d5d8dd;background:#f5f6f8;padding:10px 
 var 표칸모양   = 'border:1px solid #d5d8dd;padding:10px 12px;vertical-align:top;';
 var 표상자모양 = 'overflow-x:auto;-webkit-overflow-scrolling:touch;';
 
+/**
+ * 옛날식 표 속성도 같이 넣는다.
+ *
+ * 티스토리 편집기가 style= 을 지워 버리는 경우가 있다. 그때도 선이 보이도록
+ * border/cellpadding 같은 오래된 HTML 속성을 함께 쓴다. 이 속성들은
+ * 편집기 정리(sanitize)를 대체로 통과한다. 둘 다 살아 있으면 style 이 이긴다.
+ */
+var 표옛속성 = ' border="1" cellpadding="8" cellspacing="0"';
+
 function 마크다운을HTML로(마크다운) {
   var 줄들 = String(마크다운 || '').split('\n');
   var 나온것 = [], 목록열림 = false, 문단 = [], 표 = [];
@@ -916,7 +925,7 @@ function 마크다운을HTML로(마크다운) {
     if (!머리 && !모은것.length) return;
 
     var 조각 = ['<div style="' + 표상자모양 + '">',
-                '<table style="' + 표겉모양 + '">'];
+                '<table' + 표옛속성 + ' style="' + 표겉모양 + '">'];
     if (머리) {
       조각.push('<thead><tr>' + 머리.map(function (칸) {
         return '<th style="' + 표머리모양 + '">' + 인라인(칸) + '</th>';
