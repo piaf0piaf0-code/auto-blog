@@ -362,17 +362,43 @@ def wait_for_editor_or_login(page: Any) -> None:
         except Exception:
             pass
 
-    print("\n티스토리 로그인 또는 글쓰기 화면 확인이 필요합니다.")
-    print("열린 브라우저에서 로그인하고 글쓰기 화면이 보이면 Enter를 누르세요.")
-    input("계속하려면 Enter: ")
+    # 여기까지 왔다는 것은 글쓰기 화면이 아니라는 뜻이다.
+    # 로그인이 풀리면 티스토리가 /manage/newpost/ 를 블로그 첫 화면으로 되돌린다.
+    #
+    # 예전에는 Enter 를 기다렸는데, 미리 눌린 줄바꿈이 남아 있으면 input() 이
+    # 곧바로 끝나 버려서 "Enter 를 눌러도 그대로"인 것처럼 보였다.
+    # 그래서 Enter 를 기다리지 않고, 글쓰기 화면이 나타날 때까지 지켜본다.
+    지금주소 = ""
+    try:
+        지금주소 = page.url
+    except Exception:
+        pass
 
-    for selector in title_selectors:
-        try:
-            page.locator(selector).first.wait_for(timeout=20000)
-            return
-        except Exception:
-            pass
-    raise RuntimeError("티스토리 글쓰기 제목 입력칸을 찾지 못했습니다.")
+    기다릴초 = float(os.getenv("TISTORY_BROWSER_LOGIN_WAIT_SECONDS", "300"))
+    print("\n" + "=" * 58)
+    print("티스토리 로그인이 필요합니다.")
+    print("지금 열려 있는 이 브라우저 창에서 아래를 해 주세요.")
+    print("  1) 오른쪽 위에서 티스토리(카카오)로 로그인")
+    print("  2) 주소창에 다음을 넣고 이동")
+    print("     https://finwiz.tistory.com/manage/newpost/")
+    print("  3) 제목 입력칸이 보이면 그대로 두세요. 알아서 이어집니다.")
+    print(f"  (지금 브라우저 주소: {지금주소 or '알 수 없음'})")
+    print(f"  최대 {int(기다릴초)}초 기다립니다. Enter 를 누를 필요는 없습니다.")
+    print("=" * 58)
+
+    마감 = time.time() + 기다릴초
+    while time.time() < 마감:
+        for selector in title_selectors:
+            try:
+                page.locator(selector).first.wait_for(timeout=1000)
+                logging.info("티스토리 글쓰기 화면을 확인했습니다. 이어서 진행합니다.")
+                return
+            except Exception:
+                continue
+    raise RuntimeError(
+        "티스토리 글쓰기 제목 입력칸을 찾지 못했습니다. "
+        "이 브라우저 프로필의 티스토리 로그인이 풀린 것 같습니다."
+    )
 
 
 def fill_title(page: Any, title: str) -> None:
