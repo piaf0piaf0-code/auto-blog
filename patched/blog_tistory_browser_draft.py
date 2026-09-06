@@ -282,7 +282,7 @@ def upload_tistory_thumbnail_via_wordpress(
         username,
         app_password,
         thumbnail_path,
-        item.keyword,
+        item.tistory_title or item.title or item.keyword,
     )
     if not media_id:
         return ""
@@ -379,19 +379,30 @@ def wait_for_editor_or_login(page: Any, write_url: str = "") -> None:
     print("티스토리 로그인이 필요합니다.")
     print("지금 열려 있는 이 브라우저 창에서 아래를 해 주세요.")
     print("  1) 오른쪽 위에서 티스토리(카카오)로 로그인")
-    print("  2) 주소창에 다음을 넣고 이동")
-    print("     https://finwiz.tistory.com/manage/newpost/")
-    print("  3) 제목 입력칸이 보이면 그대로 두세요. 알아서 이어집니다.")
+    print("  2) 카카오 로그인과 본인 확인을 끝까지 완료하세요.")
+    print("  3) 로그인 뒤에는 창을 그대로 두세요. 글쓰기 화면은 알아서 엽니다.")
     print(f"  (지금 브라우저 주소: {지금주소 or '알 수 없음'})")
     if write_url:
         print(f"  (로그인만 하시면 됩니다. 주소 이동은 이쪽에서 다시 시도합니다: {write_url})")
     print(f"  최대 {int(기다릴초)}초 기다립니다. Enter 를 누를 필요는 없습니다.")
     print("=" * 58)
 
-    # 로그인이 끝나도 이 페이지는 되돌려진 주소에 그대로 머문다.
-    # 그래서 몇 초에 한 번씩 글쓰기 주소로 다시 가 본다.
+    # 카카오 인증 중에 글쓰기 주소로 다시 가면 인증 과정이 초기화된다.
+    # 따라서 로그인 화면에서는 절대 이동하지 않고, 인증이 끝난 뒤에만 한 번
+    # 글쓰기 주소를 연다.
     마감 = time.time() + 기다릴초
-    다음이동 = 0.0
+    로그인화면을봤나 = False
+    처음재시도했나 = False
+    로그인뒤이동했나 = False
+
+    def 로그인화면인가(주소: str) -> bool:
+        주소 = (주소 or "").lower()
+        return (
+            "accounts.kakao.com" in 주소
+            or "/auth/login" in 주소
+            or "tistory.com/auth" in 주소
+        )
+
     while time.time() < 마감:
         for selector in title_selectors:
             try:
@@ -400,12 +411,39 @@ def wait_for_editor_or_login(page: Any, write_url: str = "") -> None:
                 return
             except Exception:
                 continue
-        if write_url and time.time() >= 다음이동:
-            다음이동 = time.time() + 8
+
+        try:
+            현재주소 = page.url
+        except Exception:
+            현재주소 = ""
+
+        if 로그인화면인가(현재주소):
+            로그인화면을봤나 = True
+            page.wait_for_timeout(750)
+            continue
+
+        # 처음에는 로그인 여부를 확인하기 위해 한 번만 글쓰기 화면을 연다.
+        # 이후 카카오 인증 화면을 거쳤다면, 로그인 완료 후 다시 한 번만 연다.
+        이동할때 = (
+            write_url
+            and not 처음재시도했나
+            and not 로그인화면을봤나
+        ) or (
+            write_url
+            and 로그인화면을봤나
+            and not 로그인뒤이동했나
+        )
+        if 이동할때:
+            if 로그인화면을봤나:
+                로그인뒤이동했나 = True
+                logging.info("티스토리 로그인 완료를 확인해 글쓰기 화면으로 이동합니다.")
+            else:
+                처음재시도했나 = True
             try:
                 page.goto(write_url, wait_until="domcontentloaded", timeout=20000)
             except Exception:
                 pass
+        page.wait_for_timeout(750)
     raise RuntimeError(
         "티스토리 글쓰기 제목 입력칸을 찾지 못했습니다. "
         "이 브라우저 프로필의 티스토리 로그인이 풀린 것 같습니다."
@@ -809,7 +847,7 @@ def move_editor_caret_to_start(page: Any) -> None:
 
 
 def set_tistory_body_image_alt(page: Any, alt_text: str) -> bool:
-    """Set the keyword as alt text on the first image used as Tistory's thumbnail."""
+    """Set the article title as alt text on the first Tistory body image."""
     clean_alt = re.sub(r"\s+", " ", alt_text).strip()
     if not clean_alt:
         return False
@@ -1193,7 +1231,7 @@ def set_tistory_home_topic(page: Any, topic: str) -> bool:
     # 목록에서 고른다. 항목 앞에 '- ' 가 붙어 보일 수 있어 기호를 떼고 맞춘다.
     try:
         골랐나 = page.evaluate(
-            """
+            r"""
             (topic) => {
                 const clean = (text) => (text || '').replace(/[\s\u00b7\u2010-\u2015\-]/g, '');
                 const target = clean(topic);
@@ -1226,6 +1264,53 @@ def set_tistory_home_topic(page: Any, topic: str) -> bool:
         logging.info("티스토리 홈주제 설정 완료: %s", topic)
         return True
     logging.warning("티스토리 홈주제를 눌렀지만 '%s' 로 바뀌지 않았습니다. 지금 값: %s", topic, 확인)
+    return False
+
+
+# ══════════════════════════════════════════════════════════
+#  자동 공개 발행 (기본 꺼짐)
+#
+#  임시저장에서 멈추는 것이 안전장치다. 사람이 한 번 보고 발행한다.
+#  다만 꿈해몽처럼 금액·금리 같은 사실이 없는 주제는 그 확인이 덜 필요하다.
+#
+#  .env 에서 켠다. 비워 두면(기본) 지금처럼 임시저장까지만 한다.
+#      TISTORY_AUTO_PUBLISH_CATEGORIES=꿈해몽
+#  쉼표로 여러 개도 된다. 대출관련을 여기에 넣지 마세요.
+#
+#  공개된 글은 되돌리기 어렵다. 검색엔진이 이미 가져갈 수 있다.
+# ══════════════════════════════════════════════════════════
+
+def auto_publish_categories() -> list[str]:
+    값 = os.getenv("TISTORY_AUTO_PUBLISH_CATEGORIES", "").strip()
+    return [부분.strip() for 부분 in 값.split(",") if 부분.strip()]
+
+
+def should_auto_publish(category: str) -> bool:
+    켠것 = auto_publish_categories()
+    if not 켠것:
+        return False
+    이름 = str(category or "").strip()
+    return any(하나 in 이름 for 하나 in 켠것)
+
+
+def click_publish_now(page: Any) -> bool:
+    """발행 설정 화면의 '공개 발행' 을 누른다. 못 찾으면 False."""
+    if not open_tistory_publish_settings(page):
+        logging.warning("발행 설정 화면을 열지 못해 자동 발행을 건너뜁니다.")
+        return False
+
+    for 글자 in ["공개 발행", "공개발행"]:
+        try:
+            단추 = page.get_by_text(글자, exact=False).last
+            단추.wait_for(state="visible", timeout=2500)
+            단추.click(timeout=3000)
+            page.wait_for_timeout(3000)
+            logging.info("티스토리 공개 발행을 눌렀습니다.")
+            return True
+        except Exception:
+            continue
+
+    logging.warning("'공개 발행' 단추를 찾지 못해 임시저장 상태로 둡니다.")
     return False
 
 
@@ -1303,7 +1388,15 @@ def save_tistory_draft_with_browser(
     click_draft_save(page)
     logging.info("티스토리 대표이미지를 포함해 임시저장 완료했습니다.")
 
-    return DraftResult(post_id="", link=page.url, status="draft", platform="TistoryBrowser")
+    상태 = "draft"
+    if should_auto_publish(item.category):
+        logging.info("[%s] 자동 공개 발행 대상입니다.", item.category)
+        if click_publish_now(page):
+            상태 = "published"
+        else:
+            logging.warning("자동 발행에 실패했습니다. 임시저장 상태로 남습니다.")
+
+    return DraftResult(post_id="", link=page.url, status=상태, platform="TistoryBrowser")
 
 
 def run_pipeline(
