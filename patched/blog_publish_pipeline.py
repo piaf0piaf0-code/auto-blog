@@ -839,26 +839,169 @@ def insert_after_nth_paragraph(html: str, ad_code: str, paragraph_number: int) -
     return html[:insert_at] + "\n" + ad_code + "\n" + html[insert_at:]
 
 
-def insert_before_summary(html: str, ad_code: str) -> str:
+# 광고가 들어가면 안 되는 덩어리. 목록이나 표 한가운데를 광고가 갈라놓으면
+# 화면이 깨지고, 애드센스도 콘텐츠를 방해하는 배치로 본다.
+AD_PROTECTED_TAGS = ("ul", "ol", "table", "blockquote", "pre", "figure")
+
+# 본문에서 광고를 놓고 싶은 대략적인 위치(글 길이 대비 비율).
+# 도입부 바로 아래(4%)는 광고가 글 맨 위에 오는 자리라 쓰지 않는다.
+# 이보다 짧은 글에는 광고를 넣지 않는다. 내용보다 광고가 많아 보이는 글은
+# 애드센스가 싫어하고, 클릭도 나오지 않는다.
+MIN_BODY_LENGTH_FOR_ADS = 800
+
+AD_POSITION_RATIOS = {
+    "after_intro": 0.22,
+    "first_section_end": 0.22,
+    "middle": 0.55,
+    "mid_content": 0.55,
+}
+
+
+def ad_protected_ranges(html: str) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = []
+    for tag in AD_PROTECTED_TAGS:
+        pattern = rf"<{tag}\b.*?</{tag}\s*>"
+        for match in re.finditer(pattern, html, flags=re.IGNORECASE | re.DOTALL):
+            ranges.append((match.start(), match.end()))
+    return ranges
+
+
+def inside_protected_range(offset: int, ranges: list[tuple[int, int]]) -> bool:
+    return any(start < offset < end for start, end in ranges)
+
+
+def ad_anchor_points(html: str) -> list[tuple[int, bool]]:
+    """광고를 끼워 넣어도 안전한 자리 목록. (위치, 소제목앞인가)"""
+    ranges = ad_protected_ranges(html)
+    anchors: list[tuple[int, bool]] = []
+    for match in re.finditer(r"</p\s*>", html, flags=re.IGNORECASE):
+        offset = match.end()
+        if not inside_protected_range(offset, ranges):
+            anchors.append((offset, False))
+    for match in re.finditer(r"<h[23]\b", html, flags=re.IGNORECASE):
+        offset = match.start()
+        if not inside_protected_range(offset, ranges):
+            anchors.append((offset, True))
+    anchors.sort()
+
+    # 문단 끝과 바로 뒤 소제목은 사실상 같은 자리다. 소제목 쪽만 남긴다.
+    merged: list[tuple[int, bool]] = []
+    for offset, is_heading in anchors:
+        if merged and offset - merged[-1][0] <= 3:
+            if is_heading:
+                merged[-1] = (offset, True)
+            continue
+        merged.append((offset, is_heading))
+    return merged
+
+
+def choose_ad_anchor(
+    anchors: list[tuple[int, bool]],
+    body_length: int,
+    ratio: float,
+    used: list[int],
+) -> int | None:
+    """원하는 비율에 가장 가까운 자리를 고르되, 소제목 바로 앞을 우대한다.
+
+    소제목 앞이 광고 효율이 가장 좋다. 읽던 사람이 한 단락을 끝내고
+    다음 소제목으로 눈을 옮기는 길목이라, 광고가 자연스럽게 시야에 들어온다.
+    """
+    if not anchors:
+        return None
+    target = int(body_length * ratio)
+    floor = int(body_length * 0.15)  # 글 맨 위에는 광고를 두지 않는다
+    base_gap = max(300, body_length // 8)
+    heading_bonus = max(200, int(body_length * 0.08))
+
+    # 광고끼리 충분히 떨어뜨리는 것이 먼저지만, 그것 때문에 광고를
+    # 아예 못 넣으면 손해다. 간격을 단계적으로 풀어가며 자리를 찾는다.
+    # 다만 마지막 선까지 풀지는 않는다. 광고 두 개가 내용 없이 붙어 있는
+    # 것은 광고 하나를 못 넣는 것보다 나쁘다(애드센스 정책 위반).
+    hard_gap = min(400, max(body_length // 6, 1))
+    for min_gap in (base_gap, max(base_gap // 2, hard_gap), hard_gap):
+        best_offset = None
+        best_score = None
+        for offset, is_heading in anchors:
+            if offset < floor:
+                continue
+            if any(abs(offset - mark) < min_gap for mark in used):
+                continue
+            score = abs(offset - target) - (heading_bonus if is_heading else 0)
+            if best_score is None or score < best_score:
+                best_score = score
+                best_offset = offset
+        if best_offset is not None:
+            return best_offset
+    return None
+
+
+def summary_ad_offset(html: str, anchors: list[tuple[int, bool]]) -> int | None:
+    """맺음말 바로 앞. 끝까지 읽은 사람이 다음 행동을 찾는 자리라 반응이 좋다."""
     match = re.search(r"<h2[^>]*>\s*최종\s*정리하면[,，]?", html, flags=re.IGNORECASE)
     if match:
-        return html[: match.start()] + "\n" + ad_code + "\n" + html[match.start() :]
-    matches = list(re.finditer(r"<h2", html, flags=re.IGNORECASE))
-    if matches:
-        insert_at = matches[-1].start()
-        return html[:insert_at] + "\n" + ad_code + "\n" + html[insert_at:]
-    return insert_after_nth_paragraph(html, ad_code, 3)
+        return match.start()
+    headings = [offset for offset, is_heading in anchors if is_heading]
+    if headings:
+        return headings[-1]
+    if anchors:
+        return anchors[-1][0]
+    return None
+
+
+def insert_before_summary(html: str, ad_code: str) -> str:
+    offset = summary_ad_offset(html, ad_anchor_points(html))
+    if offset is None:
+        return html + "\n" + ad_code
+    return html[:offset] + "\n" + ad_code + "\n" + html[offset:]
 
 
 def insert_ad_by_position(html: str, ad_code: str, position: str) -> str:
-    paragraph_count = len(re.findall(r"</p\s*>", html, flags=re.IGNORECASE))
-    if position == "after_intro":
+    """슬롯 하나만 넣을 때 쓰는 옛 방식. 여러 개는 insert_manual_ads 가 처리한다."""
+    anchors = ad_anchor_points(html)
+    if position in {"before_summary", "summary"}:
+        offset = summary_ad_offset(html, anchors)
+    else:
+        ratio = AD_POSITION_RATIOS.get(position, AD_POSITION_RATIOS["after_intro"])
+        offset = choose_ad_anchor(anchors, len(html), ratio, [])
+    if offset is None:
         return insert_after_nth_paragraph(html, ad_code, 2)
-    if position == "middle":
-        return insert_after_nth_paragraph(html, ad_code, max(paragraph_count // 2, 3))
-    if position == "before_summary":
-        return insert_before_summary(html, ad_code)
-    return insert_after_nth_paragraph(html, ad_code, 2)
+    return html[:offset] + "\n" + ad_code + "\n" + html[offset:]
+
+
+def plan_ad_positions(html: str, slots: list[dict[str, Any]]) -> list[tuple[int, dict[str, Any]]]:
+    """광고를 넣을 자리를 미리 다 정한다.
+
+    맺음말 앞부터 자리를 잡고, 나머지를 비율로 채운다. 이렇게 해야
+    광고끼리 너무 붙지 않는다.
+    """
+    anchors = ad_anchor_points(html)
+    if not anchors:
+        return []
+
+    body_length = len(html)
+    used: list[int] = []
+    plan: list[tuple[int, dict[str, Any]]] = []
+
+    summary_slots = [slot for slot in slots if str(slot.get("position", "")) in {"before_summary", "summary"}]
+    other_slots = [slot for slot in slots if slot not in summary_slots]
+
+    for slot in summary_slots:
+        offset = summary_ad_offset(html, anchors)
+        if offset is None:
+            continue
+        plan.append((offset, slot))
+        used.append(offset)
+
+    for slot in other_slots:
+        ratio = AD_POSITION_RATIOS.get(str(slot.get("position", "")), AD_POSITION_RATIOS["after_intro"])
+        offset = choose_ad_anchor(anchors, body_length, ratio, used)
+        if offset is None:
+            continue
+        plan.append((offset, slot))
+        used.append(offset)
+
+    plan.sort(key=lambda item: item[0])
+    return plan
 
 
 def insert_manual_ads(html: str, wp_url: str, ads_config_path: str) -> str:
@@ -872,18 +1015,31 @@ def insert_manual_ads(html: str, wp_url: str, ads_config_path: str) -> str:
         logging.info("이 도메인은 광고 삽입 대상이 아닙니다: %s", domain)
         return html
 
-    updated_html = html
-    inserted = 0
+    if len(html) < MIN_BODY_LENGTH_FOR_ADS:
+        logging.info("본문이 너무 짧아 광고를 넣지 않습니다: %s자", len(html))
+        return html
+
+    usable: list[dict[str, Any]] = []
     for slot in slots[:3]:
         ad_code = read_ad_code(str(slot.get("file", "")))
         if not ad_code:
             continue
-        compact_code = compact_ad_code(ad_code, include_loader=inserted == 0)
-        wrapped_ad = f'<!-- AUTO_BLOG_AD_INSERTED:{slot.get("name", "ad")} -->{compact_code}'
-        updated_html = insert_ad_by_position(updated_html, wrapped_ad, str(slot.get("position", "")))
-        inserted += 1
+        usable.append({**slot, "_code": ad_code})
 
-    logging.info("수동광고 삽입 수: %s / 도메인: %s", inserted, domain)
+    plan = plan_ad_positions(html, usable)
+    if not plan:
+        logging.info("광고를 넣을 자리를 찾지 못했습니다: %s", domain)
+        return html
+
+    updated_html = html
+    # 뒤에서부터 넣어야 앞쪽 위치가 밀리지 않는다.
+    for order, (offset, slot) in reversed(list(enumerate(plan))):
+        compact_code = compact_ad_code(str(slot.get("_code", "")), include_loader=order == 0)
+        wrapped_ad = f'<!-- AUTO_BLOG_AD_INSERTED:{slot.get("name", "ad")} -->{compact_code}'
+        updated_html = updated_html[:offset] + "\n" + wrapped_ad + "\n" + updated_html[offset:]
+
+    spots = ", ".join(f"{int(offset / max(len(html), 1) * 100)}%" for offset, _ in plan)
+    logging.info("수동광고 삽입 수: %s / 위치: %s / 도메인: %s", len(plan), spots, domain)
     return updated_html
 
 
