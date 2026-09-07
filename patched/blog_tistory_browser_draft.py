@@ -25,6 +25,7 @@ import html as html_module
 import logging
 import os
 import re
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -180,6 +181,89 @@ def resolve_profile_path(profile_dir: str) -> Path:
     if profile_path.is_absolute():
         return profile_path
     return LOCAL_PROFILE_BASE / profile_path.name
+
+
+def stale_browser_pids(profile_path: Path) -> list[int]:
+    """이 프로필 폴더를 붙잡고 있는 크롬이 아직 살아 있는지 본다.
+
+    지난번 실행에서 창을 닫지 않았거나 비정상 종료되면 그 크롬이 프로필을
+    잠근 채 남는다. 그 상태로 다시 켜면 새 크롬이 "기존 브라우저 세션에서
+    열고 있습니다" 하고 그냥 꺼져 버린다.
+    """
+    if os.name != "nt":
+        return []
+    marker = profile_path.name
+    command = (
+        "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
+        f"Where-Object {{ $_.CommandLine -like '*{marker}*' }} | "
+        "Select-Object -ExpandProperty ProcessId"
+    )
+    try:
+        completed = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except Exception:
+        return []
+    pids = []
+    for line in completed.stdout.splitlines():
+        line = line.strip()
+        if line.isdigit():
+            pids.append(int(line))
+    return pids
+
+
+def close_stale_browser(profile_path: Path) -> int:
+    pids = stale_browser_pids(profile_path)
+    for pid in pids:
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True,
+                timeout=20,
+            )
+        except Exception:
+            logging.warning("남아 있는 브라우저를 닫지 못했습니다: pid=%s", pid)
+    return len(pids)
+
+
+def launch_browser_context(playwright: Any, profile_path: Path, headless: bool):
+    """브라우저를 켠다. 프로필이 잠겨 있으면 한 번 풀고 다시 시도한다."""
+    def _launch():
+        return playwright.chromium.launch_persistent_context(
+            user_data_dir=str(profile_path),
+            headless=headless,
+            viewport={"width": 1400, "height": 950},
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+
+    남은수 = close_stale_browser(profile_path)
+    if 남은수:
+        logging.info("지난번에 안 닫힌 브라우저 %s개를 닫았습니다.", 남은수)
+        time.sleep(2)
+
+    try:
+        return _launch()
+    except Exception as exc:
+        logging.warning("브라우저를 켜지 못했습니다. 프로필이 잠겨 있는지 확인합니다: %s", exc)
+        남은수 = close_stale_browser(profile_path)
+        if 남은수:
+            logging.info("붙잡고 있던 브라우저 %s개를 닫았습니다. 다시 켜 봅니다.", 남은수)
+            time.sleep(3)
+            return _launch()
+        logging.error(
+            "\n"
+            "브라우저를 켤 수 없습니다. 아래를 순서대로 해 보세요.\n"
+            "  1) 화면에 열려 있는 크롬 창을 전부 닫습니다\n"
+            "  2) 컴퓨터를 다시 시작합니다\n"
+            "  3) 그래도 안 되면 이 폴더를 통째로 지우고 다시 로그인합니다\n"
+            "     %s\n"
+            "     (지우면 티스토리 로그인만 다시 하면 됩니다. 글은 안 지워집니다)\n",
+            profile_path,
+        )
+        raise
 
 
 def insert_wordpress_detail_link(content_html: str, wordpress_detail_url: str) -> str:
@@ -1500,12 +1584,7 @@ def run_pipeline(
     logging.info("티스토리 브라우저 프로필 위치: %s", profile_path)
 
     with sync_playwright() as playwright:
-        context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(profile_path),
-            headless=headless,
-            viewport={"width": 1400, "height": 950},
-            args=["--disable-blink-features=AutomationControlled"],
-        )
+        context = launch_browser_context(playwright, profile_path, headless)
         page = context.pages[0] if context.pages else context.new_page()
         try:
             for item, target in selected:
