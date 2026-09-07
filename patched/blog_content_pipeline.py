@@ -40,6 +40,13 @@ from serpapi_budget import reserve_serpapi_slot
 
 # 꿈해몽 글에 지난 글 링크를 넣는 도우미. 파일이 없어도 나머지는 그대로 돈다.
 try:
+    import article_v2
+except Exception as _v2오류:  # pragma: no cover
+    article_v2 = None
+    logging.getLogger(__name__).info(
+        "article_v2.py 가 없어 두 단계 글쓰기는 건너뜁니다: %s", _v2오류)
+
+try:
     import dream_links
 except Exception as _꿈링크오류:  # pragma: no cover
     dream_links = None
@@ -2547,24 +2554,56 @@ def run_pipeline(credentials_path: str, spreadsheet_id: str, openai_key: str, mo
                 item.wordpress_longtails,
                 research.snippets,
             )
-            raw_text = call_openai_with_retry(
-                client=openai_client,
-                model=model,
-                system_prompt=system_prompt_for_category(item.category),
-                user_prompt=build_user_prompt(
-                    item.keyword,
-                    item.category,
-                    item.source_link,
-                    research,
-                    item.wordpress_longtails,
-                ),
-            )
+            # ── 두 단계 글쓰기 (ARTICLE_V2_CATEGORIES 에 적은 카테고리만) ──
+            # 답할 수 있는 질문을 먼저 뽑고, 그 질문에 답하는 글을 쓴다.
+            # 롱테일을 H2 에 밀어 넣는 검증은 여기서 건너뛴다. 그 검증이
+            # 목차를 '독자 질문' 이 아니라 '키워드 넣을 자리' 로 만들기 때문이다.
+            v2쓰기 = article_v2 is not None and article_v2.enabled_for(item.category)
+            if v2쓰기:
+                def _부르기(system_prompt: str, user_prompt: str) -> str:
+                    return call_openai_with_retry(
+                        client=openai_client,
+                        model=model,
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                    )
+
+                재료 = "\n\n".join(
+                    부분 for 부분 in [research.snippets, research.source_notes] if 부분
+                )
+                article, 잰것 = article_v2.generate(
+                    call_openai=_부르기,
+                    parse_article=lambda raw: parse_generated_article(raw, item.keyword),
+                    keyword=item.keyword,
+                    category=item.category,
+                    longtails=item.wordpress_longtails,
+                    material=재료,
+                )
+                logging.info(
+                    "[v2] 완성: %s자 · 모호밀도 %s · 숫자밀도 %s · 갈래 %s",
+                    잰것["글자수"], 잰것["모호밀도"], 잰것["숫자밀도"], 잰것["mode"])
+                raw_text = ""
+            else:
+                raw_text = call_openai_with_retry(
+                    client=openai_client,
+                    model=model,
+                    system_prompt=system_prompt_for_category(item.category),
+                    user_prompt=build_user_prompt(
+                        item.keyword,
+                        item.category,
+                        item.source_link,
+                        research,
+                        item.wordpress_longtails,
+                    ),
+                )
             try:
-                article = parse_generated_article(raw_text, item.keyword)
+                if not v2쓰기:
+                    article = parse_generated_article(raw_text, item.keyword)
                 article = normalize_health_news_title(article, item.keyword, item.category, item.source_link)
                 validate_article_intent(article, content_intent)
-                validate_longtail_usage(article, item.wordpress_longtails)
-                validate_template_matches_longtails(article, item.wordpress_longtails, content_intent)
+                if not v2쓰기:
+                    validate_longtail_usage(article, item.wordpress_longtails)
+                    validate_template_matches_longtails(article, item.wordpress_longtails, content_intent)
                 validate_recent_issue_focus(article, item.category, content_intent)
                 validate_readability_style(article)
                 validate_controversy_depth(article, item.keyword, content_intent)
