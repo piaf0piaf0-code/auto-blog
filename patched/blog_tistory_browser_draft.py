@@ -1224,7 +1224,21 @@ def set_tistory_home_topic(page: Any, topic: str) -> bool:
         return False
 
     if not 열림:
-        logging.warning("티스토리 홈주제 상자를 찾지 못했습니다.")
+        보인것 = []
+        try:
+            보인것 = page.locator("*").evaluate_all(
+                """
+                (elements) => elements
+                    .filter((el) => el.children.length === 0)
+                    .map((el) => (el.textContent || '').trim())
+                    .filter((t) => t && t.length <= 10)
+                    .slice(0, 40)
+                """
+            )
+        except Exception:
+            pass
+        logging.warning(
+            "티스토리 홈주제 상자를 찾지 못했습니다. 화면에 보인 글자: %s", 보인것)
         return False
     page.wait_for_timeout(700)
 
@@ -1255,8 +1269,53 @@ def set_tistory_home_topic(page: Any, topic: str) -> bool:
         return False
 
     page.wait_for_timeout(700)
+
     if not 골랐나:
-        logging.warning("티스토리 홈주제 목록에서 '%s' 를 찾지 못했습니다.", topic)
+        # 목록이 접혀 있거나 스크롤해야 보이는 경우가 있다. 한 번 더 훑는다.
+        try:
+            골랐나 = page.evaluate(
+                r"""
+                (topic) => {
+                    const clean = (t) => (t || '').replace(/[\s\u00b7\u2010-\u2015\-]/g, '');
+                    const target = clean(topic);
+                    const items = Array.from(document.querySelectorAll("li, [role='option'], a, span, div"));
+                    for (const el of items) {
+                        if (el.children.length > 1) continue;
+                        if (clean(el.textContent) !== target) continue;
+                        el.scrollIntoView({block: 'center'});
+                        el.click();
+                        return true;
+                    }
+                    return false;
+                }
+                """,
+                topic,
+            )
+            page.wait_for_timeout(700)
+        except Exception:
+            pass
+
+    if not 골랐나:
+        # 무엇이 보였는지 남긴다. 이게 없으면 다음에 무엇을 고쳐야 할지 알 수 없다.
+        보인것 = []
+        try:
+            보인것 = page.locator("li, [role='option'], a, span, div").evaluate_all(
+                """
+                (elements) => elements
+                    .filter((el) => {
+                        const r = el.getBoundingClientRect();
+                        return r.width > 10 && r.height > 5 && r.bottom > 0 && el.children.length <= 1;
+                    })
+                    .map((el) => (el.textContent || '').trim())
+                    .filter((t) => t && t.length <= 12)
+                    .slice(0, 40)
+                """
+            )
+        except Exception:
+            pass
+        logging.warning(
+            "티스토리 홈주제 목록에서 '%s' 를 찾지 못했습니다. 목록에 보인 것: %s",
+            topic, 보인것)
         return False
 
     확인 = 지금값()
