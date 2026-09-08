@@ -1480,6 +1480,109 @@ function finwiz제목후보(글자) {
 }
 
 
+/**
+ * 두 제목이 얼마나 닮았는지 0~1 로 잰다.
+ *
+ * 제목같나 는 앞 15자가 같아야 한다. 그래서 '2026' 같은 말이 앞에
+ * 붙었다 떨어지면 못 알아본다. 이건 글자 두 개짜리 조각을 얼마나
+ * 나눠 갖는지로 재기 때문에 앞뒤 어디가 달라져도 알아본다.
+ *
+ * 로드맵 제목 197개끼리 서로 재 봤을 때 0.70 에서도 잘못 맞는 짝이
+ * 하나도 없었다. 0.80 은 넉넉히 안전한 값이다.
+ */
+var finwiz닮음문턱 = 0.80;
+
+function finwiz두글자쌍(열쇠) {
+  var 쌍 = {};
+  for (var i = 0; i + 1 < 열쇠.length; i++) 쌍[열쇠.substr(i, 2)] = 1;
+  return 쌍;
+}
+
+function finwiz닮음(가, 나) {
+  var A = 제목열쇠(가), B = 제목열쇠(나);
+  if (!A || !B) return 0;
+  if (A === B) return 1;
+  if (A.length < 8 || B.length < 8) return 0;
+  var a = finwiz두글자쌍(A), b = finwiz두글자쌍(B);
+  var 겹침 = 0, 전부 = {}, 열쇠;
+  for (열쇠 in a) { 전부[열쇠] = 1; if (b[열쇠]) 겹침++; }
+  for (열쇠 in b) 전부[열쇠] = 1;
+  var 합 = 0;
+  for (열쇠 in 전부) 합++;
+  return 합 ? 겹침 / 합 : 0;
+}
+
+/** 같은 글로 볼 것인가. 앞머리가 같거나, 충분히 닮았으면 그렇다. */
+function finwiz같은글인가(가, 나) {
+  if (제목같나(가, 나)) return true;
+  return finwiz닮음(가, 나) >= finwiz닮음문턱;
+}
+
+
+/**
+ * 블로그에서 읽어 온 글 목록을 시트에 적는다.
+ *
+ * 숫자만 보여 주면 왜 안 맞는지 알 수 없다. 실제 제목을 나란히
+ * 놓고 봐야 안다. 사람이 보고 직접 짝지어 줄 수도 있다.
+ */
+function finwiz블로그목록쓰기메뉴() {
+  var ui = SpreadsheetApp.getUi();
+  try {
+    var 도메인 = (typeof 카테고리표 !== 'undefined' && 카테고리표[finwiz카테고리])
+                   ? 카테고리표[finwiz카테고리].티스토리 : '';
+    if (!도메인) { ui.alert('블로그 주소를 찾지 못했습니다.'); return; }
+
+    var 목록 = finwiz티스토리목록(도메인);
+    if (!목록.글들.length) {
+      ui.alert('블로그에서 글을 읽지 못했습니다.\n\n' +
+               '글 주소 ' + 목록.주소수 + '개를 찾았습니다.\n' +
+               (목록.실패 || '') + '\n\n' +
+               '브라우저로 ' + 도메인 + '/sitemap.xml 을 열어 보세요.');
+      return;
+    }
+
+    var 링크맵 = finwiz링크읽기();
+    var 로드맵 = [];
+    for (var id in 링크맵) 로드맵.push(링크맵[id]);
+
+    var 헤더 = ['번호', '블로그 글 제목', '블로그 주소', '짝', '맞은 로드맵 제목', '닮은 정도'];
+    var 탭 = finwiz탭('finwiz_블로그글목록', 헤더);
+    if (탭.getLastRow() > 1) 탭.getRange(2, 1, 탭.getLastRow() - 1, 헤더.length).clearContent();
+
+    var 줄들 = [], 맞은수 = 0;
+    목록.글들.forEach(function (블로그글, i) {
+      var 후보 = 블로그글.후보 || [블로그글.제목];
+      var 제일좋은 = null, 제일점수 = 0;
+      로드맵.forEach(function (글) {
+        후보.forEach(function (한개) {
+          var 점수 = 제목같나(한개, 글.제목) ? 1 : finwiz닮음(한개, 글.제목);
+          if (점수 > 제일점수) { 제일점수 = 점수; 제일좋은 = 글; }
+        });
+      });
+      var 맞나 = 제일점수 >= finwiz닮음문턱;
+      if (맞나) 맞은수++;
+      줄들.push([
+        i + 1, 블로그글.제목, 블로그글.URL,
+        맞나 ? '맞음' : '못 찾음',
+        제일좋은 ? 제일좋은.제목 : '',
+        Math.round(제일점수 * 100) + '%'
+      ]);
+    });
+
+    if (줄들.length) 탭.getRange(2, 1, 줄들.length, 헤더.length).setValues(줄들);
+    탭.activate();
+
+    ui.alert('finwiz_블로그글목록 탭에 적었습니다.\n\n' +
+             '블로그 글 ' + 줄들.length + '개 중 ' + 맞은수 + '개가 로드맵 글과 맞습니다.\n\n' +
+             "'못 찾음' 인 줄을 보시면 왜 안 맞는지 바로 보입니다.\n" +
+             "제목이 정말 다르면, 그 줄의 주소를 01_최종작성순서 탭의\n" +
+             "'발행URL' 칸에 붙여넣고 '🔗 finwiz 링크 갱신' 을 누르세요.");
+  } catch (오류) {
+    ui.alert('하지 못했습니다.\n\n' + 오류.message);
+  }
+}
+
+
 function finwiz주소반영() {
   var 링크맵 = finwiz링크읽기();
   if (!Object.keys(링크맵).length) return { 반영: 0, 진단: null };
@@ -1585,7 +1688,7 @@ function finwiz주소반영() {
         아직없음.forEach(function (글) {
           if (찾은주소[글.ID]) return;
           for (var i = 0; i < 후보.length; i++) {
-            if (제목같나(후보[i], 글.제목)) {
+            if (finwiz같은글인가(후보[i], 글.제목)) {
               찾은주소[글.ID] = 블로그글.URL;
               진단.블로그에서찾음 = (진단.블로그에서찾음 || 0) + 1;
               return;
