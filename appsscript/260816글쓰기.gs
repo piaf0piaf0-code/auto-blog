@@ -1403,13 +1403,44 @@ function 글하나저장(탭, 열, 행번호, 결과, 정보) {
 // ══════════════════════════════════════════════════════════
 
 /** 제목을 비교하기 좋게 만든다. 띄어쓰기·기호·따옴표 차이를 무시한다. */
-function 제목열쇠(글자) {
+/**
+ * 자주 나오는 HTML 특수문자 이름표.
+ *
+ * 여기 없는 이름은 통째로 지운다. 이게 중요하다. 예전에는 &middot; 를
+ * 못 풀어서 'middot' 이라는 글자가 제목에 남았다. 제목열쇠는 영문자를
+ * 지우지 않으므로 그 다섯 글자가 그대로 열쇠에 섞였고,
+ * '중&middot;저신용자' 와 '중·저신용자' 가 다른 글로 보였다.
+ */
+var 특수문자표 = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
+  middot: '·', bull: '·', sdot: '·', hellip: '…',
+  ndash: '-', mdash: '-', minus: '-', shy: '',
+  lsquo: '', rsquo: '', ldquo: '', rdquo: '', sbquo: '', bdquo: '',
+  laquo: '', raquo: '', lsaquo: '', rsaquo: '',
+  deg: '', times: 'x', divide: '/', plusmn: '', prime: '', Prime: '',
+  trade: '', copy: '', reg: '', sect: '', para: '', dagger: '',
+  euro: '', pound: '', yen: '', cent: '', curren: '',
+  larr: '', rarr: '', uarr: '', darr: '', harr: '',
+  ensp: ' ', emsp: ' ', thinsp: ' ', zwj: '', zwnj: '',
+  frac12: '', frac14: '', frac34: '', sup1: '1', sup2: '2', sup3: '3'
+};
+
+/** HTML 특수문자를 사람이 보는 글자로 되돌린다. */
+function 특수문자풀기(글자) {
   return String(글자 || '')
-    .replace(/<[^>]+>/g, '')
+    .replace(/&#[xX]([0-9a-fA-F]+);/g, function (_, n) {
+      return String.fromCharCode(parseInt(n, 16));
+    })
     .replace(/&#(\d+);/g, function (_, n) { return String.fromCharCode(Number(n)); })
-    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
-    .replace(/&#8217;|&#8216;|&#8220;|&#8221;/g, '')
+    .replace(/&([a-zA-Z][a-zA-Z0-9]*);/g, function (통째, 이름) {
+      // 모르는 이름은 지운다. 남겨 두면 그 글자가 제목의 일부가 되어 버린다.
+      return Object.prototype.hasOwnProperty.call(특수문자표, 이름)
+        ? 특수문자표[이름] : ' ';
+    });
+}
+
+function 제목열쇠(글자) {
+  return 특수문자풀기(String(글자 || '').replace(/<[^>]+>/g, ''))
     .toLowerCase()
     .replace(/[^0-9a-z가-힣]/g, '');
 }
