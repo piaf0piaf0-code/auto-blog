@@ -27,6 +27,7 @@ import os
 import re
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -38,12 +39,16 @@ from dotenv import load_dotenv
 from blog_publish_pipeline import (
     DEFAULT_ADS_CONFIG_FILE,
     DEFAULT_PUBLISH_TARGETS_FILE,
+    DONE_STATUS,
+    PUBLISHED_STATUS,
     SPREADSHEET_ID,
     TODAY_SHEET,
     DraftItem,
     DraftResult,
     add_tistory_top_image,
     collect_draft_items,
+    completion_has_post,
+    ensure_completion_sheet,
     generate_thumbnail,
     insert_manual_ads,
     load_publish_target_config,
@@ -1472,6 +1477,36 @@ def click_draft_save(page: Any) -> None:
     raise RuntimeError("티스토리 임시저장 버튼을 찾지 못했습니다.")
 
 
+def record_tistory_completion(spreadsheet, item: DraftItem, result: DraftResult) -> bool:
+    """티스토리에 올린 글을 카테고리별 완료시트에 한 줄 남긴다.
+
+    지금까지는 오늘작성 시트의 상태만 바꾸고 끝이었다. 그래서 티스토리 글은
+    완료시트에 아예 안 쌓였고, 꿈해몽 지난 글 링크(dream_links)가 참고할
+    목록도 비어 있었다. 워드프레스 쪽은 원래 이 기록을 남긴다.
+    """
+    sheet = ensure_completion_sheet(spreadsheet, item.category)
+    링크 = result.link or ""
+    if completion_has_post(sheet, 링크, result.post_id):
+        logging.info("완료시트에 이미 있는 글이라 넘어갑니다: %s", item.title)
+        return False
+    상태 = PUBLISHED_STATUS if result.status == "published" else DONE_STATUS
+    sheet.append_row(
+        [
+            item.keyword,
+            item.category,
+            item.tistory_title or item.title,
+            링크,
+            datetime.now().strftime("%Y-%m-%d %H:%M"),
+            상태,
+            result.platform,
+            result.post_id,
+        ],
+        value_input_option="USER_ENTERED",
+    )
+    logging.info("완료시트에 기록했습니다: [%s] %s", 상태, item.title)
+    return True
+
+
 def save_tistory_draft_with_browser(
     page: Any,
     item: DraftItem,
@@ -1603,6 +1638,11 @@ def run_pipeline(
                         detail_url,
                     )
                     mark_draft_saved(today_sheet, item, result)
+                    try:
+                        record_tistory_completion(spreadsheet, item, result)
+                    except Exception as exc:
+                        # 기록에 실패해도 글은 이미 올라갔다. 여기서 멈추지 않는다.
+                        logging.warning("완료시트에 기록하지 못했습니다: %s", exc)
                     logging.info("티스토리 임시저장 완료: %s", result.link)
                 except Exception as exc:
                     logging.exception("티스토리 임시저장 실패, 다음 항목으로 넘어갑니다: %s / %s", item.keyword, exc)
