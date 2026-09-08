@@ -1223,13 +1223,22 @@ function finwiz링크채우기(HTML, 링크) {
   });
   if (!빠진것.length) return { HTML: 본문, 채운것: [] };
 
-  var 덩어리 = ['<h2>함께 보면 좋은 글</h2>', '<ul>'];
-  빠진것.forEach(function (한개) {
-    덩어리.push('<li><a href="' + 한개.URL + '" target="_blank" rel="noopener">' +
-                한개.제목 + '</a></li>');
+  var 줄들 = 빠진것.map(function (한개) {
+    return '<li><a href="' + 한개.URL + '" target="_blank" rel="noopener">' +
+           한개.제목 + '</a></li>';
   });
-  덩어리.push('</ul>');
-  var 넣을것 = 덩어리.join('\n');
+
+  // 이미 '함께 보면 좋은 글' 목록이 있으면 거기에 끼워 넣는다.
+  // 두 번 돌려도 목록이 두 개로 늘어나지 않게 하기 위해서다.
+  var 기존 = 본문.match(/<h2[^>]*>\s*함께\s*보면\s*좋은\s*글\s*<\/h2>\s*<ul>/i);
+  if (기존) {
+    var 끼울자리 = 기존.index + 기존[0].length;
+    본문 = 본문.substring(0, 끼울자리) + '\n' + 줄들.join('\n') + 본문.substring(끼울자리);
+    return { HTML: 본문, 채운것: 빠진것 };
+  }
+
+  var 넣을것 = ['<h2>함께 보면 좋은 글</h2>', '<ul>']
+                 .concat(줄들).concat(['</ul>']).join('\n');
 
   // '최종 정리하면' 은 발행 도구가 자리표로 쓰므로 그 앞에 넣는다
   var 자리 = 본문.search(/<h2[^>]*>\s*최종\s*정리하면/);
@@ -1415,6 +1424,159 @@ function finwiz주소반영() {
   if (반영) SpreadsheetApp.flush();
   return { 반영: 반영 };
 }
+
+// ══════════════════════════════════════════════════════════
+//  이미 쓴 글의 링크 손보기
+//
+//  글을 쓸 때는 아직 발행 안 된 글의 주소를 몰라서 링크를 못 걸었다.
+//  나중에 그 글이 발행되면 주소가 생긴다. 그때 뒤늦게 채워 넣는다.
+// ══════════════════════════════════════════════════════════
+
+/**
+ * 오늘작성 / 발행완료 탭을 훑어서 finwiz 글의 링크 상태를 본다.
+ *
+ * 고칠 수 있는 것과 없는 것을 나눈다.
+ *   - 오늘작성에 남아 있는 글 : 아직 발행 전이니 지금 바로 고칠 수 있다
+ *   - 발행완료로 넘어간 글     : 티스토리에서 직접 고쳐야 한다
+ */
+function finwiz링크점검(고칠까) {
+  var 순서목록 = finwiz순서읽기();
+  if (!순서목록.length) throw new Error('먼저 "📥 finwiz 로드맵 가져오기" 를 눌러 주세요.');
+  var 링크맵 = finwiz링크읽기();
+
+  var 문서 = finwiz문서();
+  var 고친것 = [], 손봐야할것 = [], 멀쩡한것 = 0, 본문없음 = 0;
+
+  [탭이름, 완료탭이름].forEach(function (이름) {
+    var 탭 = 문서.getSheetByName(이름);
+    if (!탭 || 탭.getLastRow() < 2) return;
+    var 발행된탭 = (이름 === 완료탭이름);
+
+    var 헤더 = 탭.getRange(1, 1, 1, 탭.getLastColumn()).getValues()[0];
+    var 열 = 열찾기(헤더);
+    if (열.title === -1) return;
+
+    var 값들 = 탭.getRange(2, 1, 탭.getLastRow() - 1, 탭.getLastColumn()).getValues();
+
+    값들.forEach(function (행, 자리) {
+      var 제목 = String(행[열.title] || '').trim();
+      if (!제목) return;
+
+      // 이 줄이 로드맵의 몇 번 글인가
+      var 대상 = null;
+      for (var i = 0; i < 순서목록.length; i++) {
+        if (제목같나(제목, 순서목록[i].제목)) { 대상 = 순서목록[i]; break; }
+      }
+      if (!대상) return;
+
+      var 본문칸 = (열['ts본문'] !== -1 && 열['ts본문'] !== undefined && 행[열['ts본문']])
+                     ? 열['ts본문'] : 열.html;
+      if (본문칸 === -1 || 본문칸 === undefined) { 본문없음++; return; }
+      var 본문 = String(행[본문칸] || '');
+      if (!본문) { 본문없음++; return; }
+
+      // 지금 주소로 다시 고르면 무엇이 걸려야 하는가
+      var 링크 = finwiz링크고르기(대상, 링크맵, 순서목록);
+      var 빠진것 = 링크.filter(function (한개) { return 본문.indexOf(한개.URL) === -1; });
+      if (!빠진것.length) { 멀쩡한것++; return; }
+
+      if (발행된탭) {
+        // 이미 발행된 글은 시트만 고쳐 봐야 소용없다. 사람이 티스토리에서 고친다.
+        손봐야할것.push({
+          순번: 대상.순번, 제목: 대상.제목,
+          주소: (열['ts주소'] !== -1 && 열['ts주소'] !== undefined)
+                  ? String(행[열['ts주소']] || '') : '',
+          빠진링크: 빠진것
+        });
+        return;
+      }
+
+      if (!고칠까) {
+        고친것.push({ 순번: 대상.순번, 제목: 대상.제목, 빠진링크: 빠진것, 미리보기: true });
+        return;
+      }
+      var 채움 = finwiz링크채우기(본문, 링크);
+      탭.getRange(자리 + 2, 본문칸 + 1).setValue(채움.HTML);
+      고친것.push({ 순번: 대상.순번, 제목: 대상.제목, 빠진링크: 채움.채운것 });
+    });
+  });
+
+  고친것.sort(function (가, 나) { return 가.순번 - 나.순번; });
+  손봐야할것.sort(function (가, 나) { return 가.순번 - 나.순번; });
+  return { 고친것: 고친것, 손봐야할것: 손봐야할것, 멀쩡한것: 멀쩡한것, 본문없음: 본문없음 };
+}
+
+
+function finwiz링크점검메뉴() {
+  var ui = SpreadsheetApp.getUi();
+  try {
+    var 미리 = finwiz링크점검(false);
+
+    if (!미리.고친것.length && !미리.손봐야할것.length) {
+      ui.alert('빠진 링크가 없습니다.\n\n' +
+               '검사한 글 중 ' + 미리.멀쩡한것 + '편은 링크가 다 들어가 있습니다.');
+      return;
+    }
+
+    var 말 = '';
+    if (미리.고친것.length) {
+      말 += '■ 지금 바로 고칠 수 있는 글 ' + 미리.고친것.length + '편\n' +
+            '   (아직 발행 전이라 시트에서 고치면 됩니다)\n\n';
+      미리.고친것.slice(0, 8).forEach(function (한개) {
+        말 += '   ' + 한개.순번 + '번  ' + 한개.제목.substring(0, 30) +
+              '  → 링크 ' + 한개.빠진링크.length + '개 추가\n';
+      });
+      if (미리.고친것.length > 8) 말 += '   … 외 ' + (미리.고친것.length - 8) + '편\n';
+      말 += '\n';
+    }
+    if (미리.손봐야할것.length) {
+      말 += '■ 이미 발행돼서 손으로 고쳐야 하는 글 ' + 미리.손봐야할것.length + '편\n' +
+            '   (티스토리에서 직접 고쳐야 합니다. 아래 "아니오" 를 누르면\n' +
+            '    목록을 새 탭에 적어 드립니다)\n\n';
+    }
+    말 += '지금 고칠 수 있는 것만 고칠까요?';
+
+    var 답 = ui.alert('빠진 링크 점검', 말, ui.ButtonSet.YES_NO);
+    if (답 !== ui.Button.YES) {
+      if (미리.손봐야할것.length) finwiz손볼목록쓰기(미리.손봐야할것);
+      return;
+    }
+
+    var 결과 = finwiz링크점검(true);
+    var 끝말 = 결과.고친것.length + '편의 글에 빠진 링크를 채웠습니다.\n' +
+               '이제 그 글들을 발행하시면 됩니다.';
+    if (결과.손봐야할것.length) {
+      finwiz손볼목록쓰기(결과.손봐야할것);
+      끝말 += '\n\n이미 발행된 ' + 결과.손봐야할것.length + '편은 시트에서 못 고칩니다.\n' +
+              "'finwiz_손볼글' 탭에 목록을 적어 뒀습니다.";
+    }
+    ui.alert(끝말);
+  } catch (오류) {
+    ui.alert('하지 못했습니다.\n\n' + 오류.message);
+  }
+}
+
+
+/** 이미 발행돼서 손으로 고쳐야 하는 글을 새 탭에 적는다. */
+function finwiz손볼목록쓰기(손봐야할것) {
+  var 헤더 = ['순번', '글 제목', '글 주소', '넣을 링크 제목', '넣을 링크 주소', '붙여넣을 HTML'];
+  var 탭 = finwiz탭('finwiz_손볼글', 헤더);
+  if (탭.getLastRow() > 1) 탭.getRange(2, 1, 탭.getLastRow() - 1, 헤더.length).clearContent();
+
+  var 줄들 = [];
+  손봐야할것.forEach(function (한개) {
+    한개.빠진링크.forEach(function (링크) {
+      줄들.push([
+        한개.순번, 한개.제목, 한개.주소, 링크.제목, 링크.URL,
+        '<li><a href="' + 링크.URL + '" target="_blank" rel="noopener">' +
+          링크.제목 + '</a></li>'
+      ]);
+    });
+  });
+  if (줄들.length) 탭.getRange(2, 1, 줄들.length, 헤더.length).setValues(줄들);
+  return 줄들.length;
+}
+
 
 function finwiz주소반영메뉴() {
   var ui = SpreadsheetApp.getUi();

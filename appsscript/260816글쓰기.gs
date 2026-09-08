@@ -162,6 +162,7 @@ function onOpen() {
     메뉴.addItem('📥 finwiz 로드맵 가져오기', 'finwiz로드맵메뉴');
     메뉴.addItem('🧭 finwiz 순서대로 글쓰기', 'finwiz화면열기');
     메뉴.addItem('🔗 finwiz 링크 갱신', 'finwiz주소반영메뉴');
+    메뉴.addItem('🩹 finwiz 빠진 링크 채우기', 'finwiz링크점검메뉴');
     메뉴.addItem('🧾 finwiz 사실카드 점검', 'finwiz카드점검메뉴');
   }
   메뉴.addToUi();
