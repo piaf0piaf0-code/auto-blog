@@ -14,6 +14,12 @@
   .링크뱃지 { display: inline-block; font-size: 11px; padding: 1px 6px;
               border-radius: 10px; background: #e8f0fe; color: #1a56c4; margin-top: 4px; }
   .링크없음 { background: #fdf0e6; color: #a35400; }
+  .오늘뱃지 { display: inline-block; font-size: 11px; padding: 1px 6px; margin-right: 4px;
+              border-radius: 10px; background: #e3f5e8; color: #1a7a3c; font-weight: 700;
+              margin-top: 4px; }
+  .나중뱃지 { display: inline-block; font-size: 11px; padding: 1px 6px; margin-right: 4px;
+              border-radius: 10px; background: #eeeeee; color: #777; margin-top: 4px; }
+  .기다림   { font-size: 11px; color: #a35400; margin-top: 5px; line-height: 1.5; }
   textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 11px;
              padding: 8px; border: 1px solid #ccc; border-radius: 6px;
              box-sizing: border-box; resize: vertical; }
@@ -163,7 +169,8 @@ function 목록그리기(결과) {
   안내.innerHTML = '전체 ' + 결과.전체 + '편 중 <b>' + 결과.끝남 + '편</b> 끝냈고 '
                  + '<b>' + 결과.남음 + '편</b> 남았습니다. '
                  + '지금 링크로 걸 수 있는 글은 ' + 결과.주소있음 + '개입니다.'
-                 + '<br>위에서부터 순서대로 쓰시면 됩니다.';
+                 + '<br>초록색 <b>오늘</b> 표시가 붙은 글까지만 오늘 쓰시면 됩니다. '
+                 + '나머지는 오늘 글이 발행된 다음에 쓰셔야 링크가 제대로 걸립니다.';
 
   if (!결과.목록.length) {
     상자.innerHTML = '<div class="안내" style="padding:10px 2px">'
@@ -174,7 +181,10 @@ function 목록그리기(결과) {
   결과.목록.forEach(function (g) {
     var d = document.createElement('div');
     d.className = '글감';
-    var 뱃지 = g.링크수
+    var 뱃지 = g.오늘쓰기
+      ? '<span class="뱃지 오늘뱃지">오늘</span>'
+      : '<span class="뱃지 나중뱃지">다음에</span>';
+    뱃지 += g.링크수
       ? '<span class="뱃지 링크뱃지">🔗 링크 ' + g.링크수 + '개</span>'
       : '<span class="뱃지 링크뱃지 링크없음">링크 없음</span>';
     뱃지 += g.카드있음
@@ -190,7 +200,12 @@ function 목록그리기(결과) {
                 + '</div>'
                 + '<div class="키워드">' + 안전(g.제목) + '</div>'
                 + '<div class="작은글씨">키워드: ' + 안전(g.메인키워드) + '</div>'
-                + 뱃지;
+                + 뱃지
+                + (g.기다릴글 && g.기다릴글.length
+                    ? '<div class="기다림">이 글은 <b>'
+                      + g.기다릴글.map(function (한개) { return 안전(한개.제목); }).join('</b>, <b>')
+                      + '</b> 이(가) 먼저 발행돼야 링크를 걸 수 있습니다.</div>'
+                    : '');
     d.onclick = function () { 글열기(g); };
     상자.appendChild(d);
   });
