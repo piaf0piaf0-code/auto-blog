@@ -2480,7 +2480,26 @@ def process_loan_bundle(items: list[WritingQueueItem], client: OpenAI, model: st
         logging.exception("대출 3키워드 묶음 글 생성 실패: %s", exc)
 
 
-def run_pipeline(credentials_path: str, spreadsheet_id: str, openai_key: str, model: str, limit: int) -> None:
+def 카테고리제한(기본: set[str] | None, 고른것: set[str] | None) -> set[str] | None:
+    """--category 로 고른 것과 원래 조건을 겹친다.
+
+    --category 를 안 쓰면(고른것이 None) 지금까지와 똑같이 돈다.
+    """
+    if 고른것 is None:
+        return 기본
+    if 기본 is None:
+        return 고른것
+    return 기본 & 고른것
+
+
+def run_pipeline(
+    credentials_path: str,
+    spreadsheet_id: str,
+    openai_key: str,
+    model: str,
+    limit: int,
+    only_categories: set[str] | None = None,
+) -> None:
     sheet_client = gspread.service_account(filename=credentials_path)
     spreadsheet = sheet_client.open_by_key(spreadsheet_id)
     today_sheet = ensure_today_sheet(spreadsheet)
@@ -2491,13 +2510,13 @@ def run_pipeline(credentials_path: str, spreadsheet_id: str, openai_key: str, mo
     health_items = collect_writing_queue(
         today_sheet,
         health_bundle_limit,
-        include_categories={"신장정신"},
+        include_categories=카테고리제한({"신장정신"}, only_categories),
         values=today_values,
     )
     policy_candidates = collect_writing_queue(
         today_sheet,
         30,
-        include_categories={"정책지원"},
+        include_categories=카테고리제한({"정책지원"}, only_categories),
         values=today_values,
     )
     # 정책지원은 실제 검색 롱테일이 세 개 이상일 때만 롱테일 글로 작성한다.
@@ -2511,7 +2530,7 @@ def run_pipeline(credentials_path: str, spreadsheet_id: str, openai_key: str, mo
     loan_candidates = collect_writing_queue(
         today_sheet,
         60,
-        include_categories={"대출관련", "대출"},
+        include_categories=카테고리제한({"대출관련", "대출"}, only_categories),
         values=today_values,
     )
     loan_bundles = collect_loan_bundles(loan_candidates)
@@ -2522,7 +2541,8 @@ def run_pipeline(credentials_path: str, spreadsheet_id: str, openai_key: str, mo
     queue_items = collect_writing_queue(
         today_sheet,
         limit,
-        exclude_categories={"신장정신"},
+        include_categories=only_categories,
+        exclude_categories=None if only_categories else {"신장정신"},
         values=today_values,
     )
     queue_items = [
@@ -2745,6 +2765,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default=None, help="OpenAI 모델명")
     parser.add_argument("--limit", type=int, default=None, help="한 번에 처리할 최대 행 수")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    parser.add_argument(
+        "--category",
+        default="",
+        help="이 카테고리만 씁니다. 쉼표로 여러 개. 비우면 지금처럼 전부 씁니다. (예: 꿈해몽)",
+    )
     return parser
 
 
@@ -2771,7 +2796,18 @@ def main() -> None:
     if "여기에" in openai_key or "your_" in openai_key:
         raise RuntimeError("OPENAI_API_KEY에 실제 OpenAI API 키를 입력해야 합니다.")
 
-    run_pipeline(credentials_path, spreadsheet_id, openai_key, model, limit)
+    고른것 = {부분.strip() for 부분 in (args.category or "").split(",") if 부분.strip()}
+    if 고른것:
+        logging.info("이 카테고리만 씁니다: %s", ", ".join(sorted(고른것)))
+
+    run_pipeline(
+        credentials_path,
+        spreadsheet_id,
+        openai_key,
+        model,
+        limit,
+        only_categories=고른것 or None,
+    )
 
 
 if __name__ == "__main__":
