@@ -78,7 +78,9 @@ def tistory_category_label(item: DraftItem, target_url: str) -> str:
     if "정책" in item.category:
         return "관공서 제도 혜택 관련"
     if "꿈" in item.category:
-        return "꿈 해몽 전문"
+        # 꿈해몽은 dream_category_candidates 가 맡는다. 여기서 이름 하나로
+        # 못 박으면 그 이름이 없는 블로그에서는 카테고리가 안 잡힌다.
+        return ""
     if "웰빙" in item.category or any(word in subject for word in ["건강", "음식", "영양", "다이어트"]):
         return "건강 음식 관련"
     if "신장" in item.category:
@@ -141,6 +143,30 @@ def finwiz_category_candidates(item: DraftItem) -> list[str]:
     return 정리
 
 
+def dream_category_candidates(item: DraftItem) -> list[str]:
+    """꿈해몽 글에 붙일 티스토리 카테고리를 우선순위대로 돌려준다.
+
+    블로그에 없는 이름은 select_tistory_category 가 알아서 건너뛴다.
+    그래서 실제로 쓰는 이름을 맨 앞에 두고, 옛 이름을 뒤에 남겨 둔다.
+    """
+    글 = f"{item.keyword} {item.tistory_title or item.title}"
+    후보 = ["궁금한 꿈해몽", "궁금한 꿈 해몽"]
+    if any(말 in 글 for 말 in ["로또", "복권", "돈", "재물", "금전"]):
+        후보 += ["재물운 꿈해몽"]
+    if any(말 in 글 for 말 in ["태몽", "임신", "출산", "아기"]):
+        후보 += ["태몽"]
+    후보 += ["꿈해몽", "꿈 해몽 전문", "꿈 해몽"]
+
+    본것: set[str] = set()
+    정리: list[str] = []
+    for 이름 in 후보:
+        if 이름 in 본것:
+            continue
+        본것.add(이름)
+        정리.append(이름)
+    return 정리
+
+
 def tistory_category_candidates(
     item: DraftItem, target_url: str, target_config: dict[str, Any]
 ) -> list[str]:
@@ -148,6 +174,8 @@ def tistory_category_candidates(
     설정 = configured_tistory_category_label(item, target_url, target_config)
     if 설정:
         return [설정]
+    if "꿈" in item.category:
+        return dream_category_candidates(item)
     if normalized_host(target_url) == "finwiz.tistory.com":
         return finwiz_category_candidates(item)
     return []
