@@ -1,40 +1,40 @@
 @echo off
 chcp 65001 > nul
 cd /d "%~dp0"
-title 꿈해몽 자동 (글쓰기 + 임시저장)
+title 블로그 자동 (글쓰기 + 임시저장)
 
 echo ==========================================
-echo   꿈해몽 자동 처리
+echo   블로그 자동 처리
 echo ==========================================
 echo.
-echo  오늘작성 시트에 넣어 두신 꿈해몽 키워드로
-echo  글을 만들고 티스토리에 임시저장까지 합니다.
+echo  오늘작성 시트에 넣어 두신 키워드로
+echo  글을 만들고 임시저장까지 합니다.
 echo.
+echo  워드프레스와 티스토리 둘 다 처리합니다.
 echo  공개 발행은 하지 않습니다.
-echo  티스토리에서 보시고 직접 발행하시면 됩니다.
 echo.
 
 echo [1/2] 글을 만드는 중입니다. 몇 분 걸립니다...
 echo.
-python blog_content_pipeline.py --category 꿈해몽
+python blog_content_pipeline.py
 if errorlevel 1 goto 실패1
 echo.
 echo [1/2] 글 만들기 끝.
 echo.
 
-echo [2/2] 티스토리에 임시저장하는 중입니다...
+echo [2/2] 임시저장하는 중입니다...
 echo       크롬 창이 뜨면 손대지 마세요. 알아서 진행합니다.
 echo       다른 창으로 넘어가지도 마세요.
 echo.
-python blog_tistory_browser_draft.py --category 꿈해몽
+python blog_publish_pipeline.py
 if errorlevel 1 goto 실패2
 echo.
 
 echo ==========================================
 echo   끝났습니다.
 echo.
-echo   티스토리 관리 - 글 관리 에서
-echo   임시저장된 글을 확인하고 발행하시면 됩니다.
+echo   각 블로그의 글 관리에서 임시저장된 글을
+echo   확인하고 발행하시면 됩니다.
 echo ==========================================
 echo.
 pause
