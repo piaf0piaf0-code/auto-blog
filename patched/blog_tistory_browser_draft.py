@@ -1605,6 +1605,24 @@ def save_tistory_draft_with_browser(
     return DraftResult(post_id="", link=page.url, status=상태, platform="TistoryBrowser")
 
 
+# 브라우저가 죽었을 때 나오는 말들. 이 경우 남은 글을 계속 시도해 봐야
+# 전부 같은 오류로 실패한다. 살려 놓고 다시 해야 한다.
+브라우저죽음표시 = (
+    "target page, context or browser has been closed",
+    "target closed",
+    "browser has been closed",
+    "connection closed",
+    "browser closed",
+)
+
+
+def 브라우저가죽었나(오류: Exception) -> bool:
+    말 = str(오류 or "").lower()
+    if any(표시 in 말 for 표시 in 브라우저죽음표시):
+        return True
+    return type(오류).__name__ == "TargetClosedError"
+
+
 def run_pipeline(
     credentials_path: str,
     spreadsheet_id: str,
@@ -1649,33 +1667,76 @@ def run_pipeline(
     with sync_playwright() as playwright:
         context = launch_browser_context(playwright, profile_path, headless)
         page = context.pages[0] if context.pages else context.new_page()
+        되살린수 = 0
+        되살리기한도 = 3
+
+        def 한편처리(쓸페이지, item, target):
+            detail_url = wordpress_detail_link(item, target_config)
+            if detail_url:
+                logging.info("티스토리 자세히 보기 링크: %s", detail_url)
+            result = save_tistory_draft_with_browser(
+                쓸페이지,
+                item,
+                target.tistory_blog_name,
+                target.url,
+                target.ads_config_path,
+                target_config,
+                detail_url,
+            )
+            mark_draft_saved(today_sheet, item, result)
+            try:
+                record_tistory_completion(spreadsheet, item, result)
+            except Exception as exc:
+                # 기록에 실패해도 글은 이미 올라갔다. 여기서 멈추지 않는다.
+                logging.warning("완료시트에 기록하지 못했습니다: %s", exc)
+            logging.info("티스토리 임시저장 완료: %s", result.link)
+
         try:
             for item, target in selected:
                 logging.info("티스토리 임시저장 시작: [%s] %s -> %s", item.category, item.title, target.url)
                 try:
-                    detail_url = wordpress_detail_link(item, target_config)
-                    if detail_url:
-                        logging.info("티스토리 자세히 보기 링크: %s", detail_url)
-                    result = save_tistory_draft_with_browser(
-                        page,
-                        item,
-                        target.tistory_blog_name,
-                        target.url,
-                        target.ads_config_path,
-                        target_config,
-                        detail_url,
-                    )
-                    mark_draft_saved(today_sheet, item, result)
-                    try:
-                        record_tistory_completion(spreadsheet, item, result)
-                    except Exception as exc:
-                        # 기록에 실패해도 글은 이미 올라갔다. 여기서 멈추지 않는다.
-                        logging.warning("완료시트에 기록하지 못했습니다: %s", exc)
-                    logging.info("티스토리 임시저장 완료: %s", result.link)
+                    한편처리(page, item, target)
+                    continue
                 except Exception as exc:
-                    logging.exception("티스토리 임시저장 실패, 다음 항목으로 넘어갑니다: %s / %s", item.keyword, exc)
+                    if not 브라우저가죽었나(exc):
+                        logging.exception(
+                            "티스토리 임시저장 실패, 다음 항목으로 넘어갑니다: %s / %s", item.keyword, exc)
+                        continue
+                    logging.warning("브라우저가 닫혔습니다: %s", exc)
+
+                # 브라우저가 죽었다. 남은 글을 그냥 시도하면 전부 같은
+                # 오류로 실패한다. 다시 켜서 이 글부터 이어서 한다.
+                if 되살린수 >= 되살리기한도:
+                    logging.error(
+                        "브라우저를 %s번 다시 켰는데 또 닫혔습니다. 여기서 멈춥니다.\n"
+                        "  남은 글은 이 명령을 다시 실행하면 이어서 합니다.",
+                        되살린수)
+                    break
+
+                되살린수 += 1
+                logging.info("브라우저를 다시 켭니다 (%s/%s)...", 되살린수, 되살리기한도)
+                try:
+                    context.close()
+                except Exception:
+                    pass
+                try:
+                    context = launch_browser_context(playwright, profile_path, headless)
+                    page = context.pages[0] if context.pages else context.new_page()
+                except Exception as exc:
+                    logging.error("브라우저를 다시 켜지 못했습니다: %s", exc)
+                    break
+
+                try:
+                    한편처리(page, item, target)
+                except Exception as exc:
+                    logging.exception(
+                        "다시 켠 뒤에도 실패했습니다, 다음 항목으로 넘어갑니다: %s / %s",
+                        item.keyword, exc)
         finally:
-            context.close()
+            try:
+                context.close()
+            except Exception:
+                pass
 
 
 def build_parser() -> argparse.ArgumentParser:
