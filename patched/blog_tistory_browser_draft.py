@@ -838,6 +838,41 @@ def open_tistory_image_menu(page: Any) -> bool:
         return False
 
 
+def 티스토리용이미지(image_path: Path | None) -> Path | None:
+    """티스토리에 올릴 이미지를 JPG 로 만들어 둔다.
+
+    썸네일은 webp 로 만든다. 워드프레스는 잘 받지만 티스토리 편집기는
+    webp 업로드를 거절하는 경우가 있다. 본문 이미지 업로드가 거기서
+    실패하면 워드프레스 주소로 대신 넣게 되는데, 그러면 그 이미지는
+    '티스토리에 올라간 파일' 이 아니다. 티스토리는 자기한테 올라온
+    파일 중에서만 대표이미지를 고르게 하므로, 대표이미지 칸이 계속
+    비어 있게 된다. 이미지가 본문에 잘 보이는데도 그렇다.
+
+    .env 에서 끌 수 있다: TISTORY_IMAGE_FORMAT=webp
+    """
+    if not image_path or not image_path.exists():
+        return image_path
+    원하는꼴 = os.getenv("TISTORY_IMAGE_FORMAT", "jpg").strip().lower()
+    if 원하는꼴 not in {"jpg", "jpeg"}:
+        return image_path
+    if image_path.suffix.lower() in {".jpg", ".jpeg"}:
+        return image_path
+
+    바꾼것 = image_path.with_suffix(".jpg")
+    if 바꾼것.exists() and 바꾼것.stat().st_mtime >= image_path.stat().st_mtime:
+        return 바꾼것
+    try:
+        from PIL import Image
+
+        with Image.open(image_path) as 원본:
+            원본.convert("RGB").save(바꾼것, "JPEG", quality=90)
+        logging.info("티스토리용으로 JPG 를 만들었습니다: %s", 바꾼것.name)
+        return 바꾼것
+    except Exception as exc:
+        logging.warning("JPG 로 바꾸지 못해 원본을 그대로 씁니다: %s", exc)
+        return image_path
+
+
 def try_upload_thumbnail(page: Any, image_path: Path | None) -> bool:
     if not image_path or not image_path.exists():
         return False
@@ -1220,13 +1255,21 @@ def set_tistory_representative_image(page: Any, image_path: Path | None) -> bool
     # Do not select the first file input on the page. Tistory also keeps an
     # editor attachment input there, which inserts into the body but does not
     # set the representative image.
-    for text in ["대표이미지 추가", "대표 이미지 추가"]:
+    본단추 = 0
+    보인단추 = 0
+    for text in ["대표이미지 추가", "대표 이미지 추가", "대표이미지", "썸네일"]:
         try:
             buttons = page.get_by_text(text, exact=False)
-            for index in range(buttons.count()):
+            수 = buttons.count()
+            본단추 += 수
+            for index in range(수):
                 button = buttons.nth(index)
-                if not button.is_visible(timeout=700):
+                try:
+                    if not button.is_visible(timeout=700):
+                        continue
+                except Exception:
                     continue
+                보인단추 += 1
                 try:
                     with page.expect_file_chooser(timeout=6000) as file_chooser_info:
                         button.click(timeout=3000)
@@ -1235,10 +1278,14 @@ def set_tistory_representative_image(page: Any, image_path: Path | None) -> bool
                     logging.info("티스토리 대표이미지 업로드 완료: %s", image_path.name)
                     close_tistory_publish_settings(page)
                     return True
-                except Exception:
+                except Exception as exc:
+                    logging.debug("'%s' 단추 %s번째 실패: %s", text, index + 1, exc)
                     continue
         except Exception:
             continue
+    logging.info(
+        "대표이미지 단추 찾기: 글자로 찾은 것 %s개, 그중 화면에 보인 것 %s개",
+        본단추, 보인단추)
 
     # Fallback only after the representative button was tried. Limit the
     # search to the visible publish panel to avoid the editor's image input.
@@ -1260,6 +1307,24 @@ def set_tistory_representative_image(page: Any, image_path: Path | None) -> bool
         except Exception:
             continue
 
+    # 여기까지 왔으면 파일 고르기 창이 안 열린 것이다. 무엇이 보였는지
+    # 남겨 둔다. 다음에 무엇을 고쳐야 할지 알려면 이게 있어야 한다.
+    try:
+        보이는것 = page.evaluate(
+            """
+            () => {
+                const 쓸것 = [];
+                document.querySelectorAll("input[type='file']").forEach((el) => {
+                    쓸것.push('file input: accept=' + (el.accept || '없음')
+                              + ' / 부모=' + (el.parentElement ? el.parentElement.className : ''));
+                });
+                return 쓸것.slice(0, 6);
+            }
+            """
+        )
+        logging.info("발행 화면의 파일 넣는 칸: %s", 보이는것)
+    except Exception:
+        pass
     logging.warning("티스토리 대표이미지 파일 선택기를 열지 못했습니다: %s", image_path)
     return False
 
@@ -1552,6 +1617,8 @@ def save_tistory_draft_with_browser(
         wordpress_detail_url,
     )
     hosted_thumbnail_url = upload_tistory_thumbnail_via_wordpress(item, thumbnail_path, target_config)
+    # 워드프레스에는 webp 를 그대로 올리고, 티스토리에는 JPG 를 올린다.
+    티스토리이미지 = 티스토리용이미지(thumbnail_path)
 
     page.goto(write_url, wait_until="domcontentloaded", timeout=60000)
     wait_for_editor_or_login(page, write_url)
@@ -1564,11 +1631,16 @@ def save_tistory_draft_with_browser(
     # Prefer Tistory's own image upload. It is needed for the separate
     # representative-image setting; the WordPress-hosted image remains a
     # fallback when the editor hides its upload control.
-    image_inserted = try_upload_thumbnail(page, thumbnail_path)
+    image_inserted = try_upload_thumbnail(page, 티스토리이미지)
+    티스토리에올림 = image_inserted
     if not image_inserted and hosted_thumbnail_url:
         content_html = add_tistory_top_image(content_html, hosted_thumbnail_url, item.keyword)
         editor_type = set_editor_html(page, content_html)
         logging.info("티스토리 본문 이미지 보완 입력 완료: editor=%s", editor_type)
+        logging.warning(
+            "티스토리에 이미지를 못 올려서 워드프레스 주소로 넣었습니다.\n"
+            "  이러면 대표이미지를 고를 수 없습니다. 티스토리는 자기한테\n"
+            "  올라온 파일 중에서만 대표이미지를 고르게 하기 때문입니다.")
     if not image_inserted:
         image_inserted = bool(hosted_thumbnail_url)
     if not image_inserted:
@@ -1584,7 +1656,13 @@ def save_tistory_draft_with_browser(
     # otherwise hides the draft button and wrongly reports a failed draft.
     click_draft_save(page)
     logging.info("티스토리 본문 임시저장 완료. 대표이미지 설정을 이어갑니다.")
-    if not set_tistory_representative_image(page, thumbnail_path):
+    if not 티스토리에올림:
+        # 본문 이미지가 티스토리에 안 올라갔으면 대표이미지는 애초에 못 고른다.
+        # 여기서 글을 버리지는 않는다. 글은 이미 저장돼 있다.
+        logging.warning(
+            "본문 이미지가 티스토리에 올라가지 않아 대표이미지를 건너뜁니다.\n"
+            "  티스토리에서 글을 열어 이미지를 직접 하나 올리시면 대표이미지로 고를 수 있습니다.")
+    elif not set_tistory_representative_image(page, 티스토리이미지):
         raise RuntimeError("티스토리 대표이미지를 설정하지 못했습니다.")
     # 발행 설정 화면이 열려 있는 지금이 홈주제를 고를 자리다.
     # 실패해도 글은 그대로 임시저장한다. 홈주제는 나중에 손으로 바꿀 수 있다.

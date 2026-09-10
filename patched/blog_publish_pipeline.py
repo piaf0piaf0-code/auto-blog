@@ -1204,9 +1204,12 @@ def generate_thumbnail(item: DraftItem) -> Path | None:
             draw.text((margin, y), line, fill=primary, font=title_font)
             y += 92
 
-        keyword_text = f"핵심 키워드: {item.seo_keyword}"
+        # 이미지에 '핵심 키워드:' 같은 안내말은 넣지 않는다. 읽는 사람에게
+        # 아무 뜻이 없고, 기계가 만든 티만 난다. 키워드만 조용히 적는다.
+        keyword_text = re.sub(r"\s+", " ", item.seo_keyword or "").strip()
         draw.line((margin, height - 128, width - margin, height - 128), fill=accent, width=5)
-        draw.text((margin, height - 94), keyword_text[:60], fill=(67, 80, 91), font=small_font)
+        if keyword_text:
+            draw.text((margin, height - 94), keyword_text[:60], fill=(67, 80, 91), font=small_font)
 
         output_dir = ensure_thumbnail_dir()
         output_path = output_dir / safe_filename(item.keyword or item.title)
