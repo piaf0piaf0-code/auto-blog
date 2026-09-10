@@ -125,5 +125,35 @@ class TestSystemReport(unittest.TestCase):
             ui.yc.find_ffmpeg = original
 
 
+@unittest.skipUnless(HAS_GRADIO, "gradio 미설치")
+class TestAgainstVideoLength(unittest.TestCase):
+    """영상 길이를 넘는 구간은 만들기 전에 걸러야 한다.
+
+    2:37:45 짜리 영상에서 2:37:28~3:16:11 을 잡아도 아무 경고가 없었다.
+    """
+
+    INFO = {"duration": 9465}          # 2:37:45
+
+    def test_end_beyond_video(self):
+        msg = ui.duration_label("2:37:28", "3:16:11", self.INFO)
+        self.assertIn("영상 길이", msg)
+        self.assertIn("2:37:45", msg)
+
+    def test_start_beyond_video(self):
+        self.assertIn("시작 시간이 영상 길이", ui.duration_label("3:00:00", "3:00:30", self.INFO))
+
+    def test_inside_video_is_fine(self):
+        msg = ui.duration_label("1:30:00", "1:30:30", self.INFO)
+        self.assertIn("30.0초", msg)
+        self.assertIn("적당", msg)
+
+    def test_exactly_at_end_is_fine(self):
+        self.assertIn("45.0초", ui.duration_label("2:37:00", "2:37:45", self.INFO))
+
+    def test_without_video_info_still_works(self):
+        self.assertIn("40.0초", ui.duration_label("1:30", "2:10"))
+        self.assertIn("40.0초", ui.duration_label("1:30", "2:10", {}))
+
+
 if __name__ == "__main__":
     unittest.main()

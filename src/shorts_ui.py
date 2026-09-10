@@ -214,14 +214,30 @@ def parse_chapter_choice(choice: str) -> tuple[str, str]:
     return yc.format_human(start), yc.format_human(end)
 
 
-def duration_label(start: str, end: str) -> str:
-    """시작·끝 입력에 따라 길이와 숏츠 적합 여부를 알려준다."""
+def duration_label(start: str, end: str, info: dict | None = None) -> str:
+    """시작·끝 입력에 따라 길이와 숏츠 적합 여부를 알려준다.
+
+    영상을 불러왔다면 실제 길이와도 대조한다. 영상 끝을 넘는 구간은
+    받아봐야 실패하거나 엉뚱한 결과가 나오므로 여기서 걸러준다.
+    """
     if not start or not end:
         return "시작과 끝을 정해주세요."
     try:
         seg = yc.Segment(yc.parse_timecode(start), yc.parse_timecode(end))
     except yc.ClipError as e:
         return f"⚠️ {e}"
+
+    total = (info or {}).get("duration")
+    if total:
+        limit = yc.format_human(total)
+        if seg.start >= total:
+            return f"⚠️ 시작 시간이 영상 길이({limit})를 넘습니다."
+        if seg.end > total:
+            return (
+                f"⚠️ 끝 시간이 영상 길이({limit})를 넘습니다. "
+                f"끝을 {limit} 이하로 바꿔주세요."
+            )
+
     secs = seg.duration
     if secs > yc.SHORTS_MAX_SECONDS:
         note = f"숏츠 최대 {yc.SHORTS_MAX_SECONDS // 60}분을 넘습니다"
@@ -481,11 +497,15 @@ def build_app() -> gr.Blocks:
 
         # ── 길이 안내 ──
         for box in (start_box, end_box):
-            box.change(duration_label, inputs=[start_box, end_box], outputs=length_md)
+            box.change(
+                duration_label,
+                inputs=[start_box, end_box, info_state],
+                outputs=length_md,
+            )
 
         # ── 클립 만들기 ──
         def on_make(url, start, end, quality, audio_only, fast, cookies_browser,
-                    vertical, vmode, hook_text, text_pos):
+                    vertical, vmode, hook_text, text_pos, info):
             hidden = gr.update(visible=False)
             if not str(url).strip():
                 yield "⚠️ 링크를 넣어주세요.", hidden, hidden, hidden
@@ -497,6 +517,15 @@ def build_app() -> gr.Blocks:
                 segment = yc.Segment(yc.parse_timecode(start), yc.parse_timecode(end))
             except yc.ClipError as e:
                 yield f"⚠️ {e}", hidden, hidden, hidden
+                return
+
+            total = (info or {}).get("duration")
+            if total and segment.end > total:
+                yield (
+                    f"⚠️ 끝 시간({yc.format_human(segment.end)})이 영상 길이"
+                    f"({yc.format_human(total)})를 넘습니다. 끝 시간을 줄여주세요.",
+                    hidden, hidden, hidden,
+                )
                 return
 
             if segment.duration > yc.SHORTS_MAX_SECONDS:
@@ -562,7 +591,7 @@ def build_app() -> gr.Blocks:
         make_btn.click(
             on_make,
             inputs=[url_box, start_box, end_box, quality, audio_only, fast, cookies_browser,
-                    vertical, vmode, hook_text, text_pos],
+                    vertical, vmode, hook_text, text_pos, info_state],
             outputs=[status_md, result_video, result_file, open_btn],
         )
         open_btn.click(lambda: _open_folder(OUT_DIR), inputs=None, outputs=None)
