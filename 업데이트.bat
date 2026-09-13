@@ -4,7 +4,7 @@ title 유튜브 구간 추출기 - 업데이트
 cd /d "%~dp0"
 
 rem 내려받을 브랜치. 다른 버전을 쓰려면 이 줄만 바꾸면 된다.
-set "BRANCH=claude/youtube-video-time-extraction-t9nm8a"
+set "BRANCH=claude/shorts-ai-clip-suggestions"
 set "ZIPURL=https://codeload.github.com/piaf0piaf0-code/auto-blog/zip/refs/heads/%BRANCH%"
 set "TMPDIR=%TEMP%\shorts-update"
 
