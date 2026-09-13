@@ -347,11 +347,21 @@ function 글감목록() {
   값.forEach(function (행, i) {
     var 키워드 = String(행[열.keyword] || '').trim();
     if (!키워드) return;
+    // 상태 글자만 보고 판단하면 새 상태가 생길 때마다 놓친다.
+    // 글이 실제로 들어 있는지를 같이 본다.
+    var 제목 = (열.title !== -1 && 열.title !== undefined)
+                 ? String(행[열.title] || '').trim() : '';
+    var 본문 = (열.html !== -1 && 열.html !== undefined)
+                 ? String(행[열.html] || '').trim() : '';
+    var ts본문 = (열['ts본문'] !== -1 && 열['ts본문'] !== undefined)
+                 ? String(행[열['ts본문']] || '').trim() : '';
+
     목록.push({
       행번호: i + 2,
       키워드: 키워드,
       카테고리: String(행[열.category] || '').trim(),
-      상태: String(행[열.status] || '').trim()
+      상태: String(행[열.status] || '').trim(),
+      글있음: !!(제목 || 본문 || ts본문)
     });
   });
   return { 목록: 목록, 만든열: 준비.만든열, GPT주소: 마이GPT주소 };

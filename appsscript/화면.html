@@ -27,6 +27,10 @@
           margin: 12px 0; background: #f2fbf5; }
   .성공 b { color: #188038; }
   .안내 { color: #666; font-size: 12px; }
+  .다시써야함 { display: inline-block; font-size: 11px; padding: 1px 6px; margin-top: 4px;
+                border-radius: 10px; background: #fdf0e6; color: #a35400; font-weight: 700; }
+  .이미씀     { display: inline-block; font-size: 11px; padding: 1px 6px; margin-top: 4px;
+                border-radius: 10px; background: #eef1f4; color: #667; }
   .뒤로 { color: #1a73e8; cursor: pointer; font-size: 12px;
           display: inline-block; padding: 6px 0; }
 
@@ -134,8 +138,17 @@ function 목록불러오기() {
 var 전체목록 = [];
 var GPT주소 = '';
 
-/** 이미 저장을 마친 상태로 보는 값들 (이건 '안 쓴 것'이 아니다) */
-var 끝난상태 = ['발행대기', '발행완료', '완료'];
+/**
+ * 이미 글이 들어간 것으로 보는 상태들.
+ *
+ * 전에는 '임시저장완료' 와 '부분발행완료' 가 빠져 있었다. 그래서 글을
+ * 다 쓰고 블로그에 올려 놓은 것까지 '아직 안 쓴 것' 으로 보여 줬다.
+ *
+ * '검사실패' 는 일부러 남겨 둔다. 금지 표현에 걸려서 다시 써야 하는
+ * 것이라, 목록에 보여야 손을 볼 수 있다.
+ */
+var 끝난상태 = ['발행대기', '발행완료', '완료',
+                '임시저장', '임시저장완료', '부분발행완료'];
 
 function 목록그리기(결과) {
   전체목록 = 결과.목록;
@@ -165,7 +178,13 @@ function 목록그리기(결과) {
 function 다시그리기() {
   var 대기만 = document.getElementById('대기만').checked;
   var 보일것 = 대기만
-    ? 전체목록.filter(function (g) { return 끝난상태.indexOf(g.상태) === -1; })
+    ? 전체목록.filter(function (g) {
+        if (끝난상태.indexOf(g.상태) !== -1) return false;
+        // 상태가 비어 있어도 글이 들어 있으면 이미 쓴 것이다.
+        // 다시 써야 하는 '검사실패' 만 예외로 남긴다.
+        if (g.글있음 && g.상태 !== '검사실패') return false;
+        return true;
+      })
     : 전체목록;
 
   document.getElementById('개수').textContent =
@@ -184,9 +203,16 @@ function 다시그리기() {
   보일것.forEach(function (g) {
     var d = document.createElement('div');
     d.className = '글감';
+    var 꼬리표 = '';
+    if (g.상태 === '검사실패') {
+      꼬리표 = '<span class="다시써야함">다시 써야 함</span>';
+    } else if (g.글있음) {
+      꼬리표 = '<span class="이미씀">글 있음</span>';
+    }
     d.innerHTML = '<div class="작은글씨">' + g.행번호 + '행 · ' + g.카테고리
                 + (g.상태 ? ' · ' + g.상태 : '') + '</div>'
-                + '<div class="키워드">' + g.키워드 + '</div>';
+                + '<div class="키워드">' + g.키워드 + '</div>'
+                + 꼬리표;
     d.onclick = function () { 글감열기(g); };
     상자.appendChild(d);
   });
