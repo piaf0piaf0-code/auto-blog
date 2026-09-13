@@ -31,6 +31,9 @@
                 border-radius: 10px; background: #fdf0e6; color: #a35400; font-weight: 700; }
   .이미씀     { display: inline-block; font-size: 11px; padding: 1px 6px; margin-top: 4px;
                 border-radius: 10px; background: #eef1f4; color: #667; }
+  .남은채널   { display: inline-block; font-size: 11px; padding: 1px 6px; margin-top: 4px;
+                margin-left: 4px; border-radius: 10px; background: #e8f0fe; color: #1a56c4;
+                font-weight: 700; }
   .뒤로 { color: #1a73e8; cursor: pointer; font-size: 12px;
           display: inline-block; padding: 6px 0; }
 
@@ -179,10 +182,13 @@ function 다시그리기() {
   var 대기만 = document.getElementById('대기만').checked;
   var 보일것 = 대기만
     ? 전체목록.filter(function (g) {
+        // 다시 써야 하는 것은 상태와 상관없이 보여 준다
+        if (g.상태 === '검사실패') return true;
         if (끝난상태.indexOf(g.상태) !== -1) return false;
-        // 상태가 비어 있어도 글이 들어 있으면 이미 쓴 것이다.
-        // 다시 써야 하는 '검사실패' 만 예외로 남긴다.
-        if (g.글있음 && g.상태 !== '검사실패') return false;
+        // 쓸 채널이 하나도 안 남았으면 다 쓴 것이다.
+        // 워드프레스만 써 놓고 티스토리가 남았으면 아직 보여 준다.
+        if (g.남은채널 && g.남은채널.length === 0) return false;
+        if (!g.남은채널 && g.글있음) return false;
         return true;
       })
     : 전체목록;
@@ -205,9 +211,15 @@ function 다시그리기() {
     d.className = '글감';
     var 꼬리표 = '';
     if (g.상태 === '검사실패') {
-      꼬리표 = '<span class="다시써야함">다시 써야 함</span>';
+      꼬리표 += '<span class="다시써야함">다시 써야 함</span>';
+    }
+    if (g.남은채널 && g.남은채널.length) {
+      // 둘 중 하나만 남았으면 그것만 적는다. 무엇을 해야 하는지가 바로 보인다.
+      꼬리표 += '<span class="남은채널">' + g.남은채널.join(' + ') + ' 남음</span>';
+    } else if (g.남은채널) {
+      꼬리표 += '<span class="이미씀">다 씀</span>';
     } else if (g.글있음) {
-      꼬리표 = '<span class="이미씀">글 있음</span>';
+      꼬리표 += '<span class="이미씀">글 있음</span>';
     }
     d.innerHTML = '<div class="작은글씨">' + g.행번호 + '행 · ' + g.카테고리
                 + (g.상태 ? ' · ' + g.상태 : '') + '</div>'
@@ -226,7 +238,10 @@ function 글감열기(g) {
   document.getElementById('요청문').value = '요청문을 만드는 중입니다...';
   document.getElementById('답변').value = '';
   document.getElementById('알림').innerHTML = '';
-  채널칸표시(['최신이슈','정책지원','신장정신'].indexOf(g.카테고리) !== -1);
+  // 남은 채널이 하나뿐이면 고를 것이 없다. 그것으로 바로 맞춘다.
+  var 두곳다 = ['최신이슈','정책지원','신장정신'].indexOf(g.카테고리) !== -1;
+  채널칸표시(두곳다);
+  if (두곳다 && g.남은채널 && g.남은채널.length === 1) 채널고르기(g.남은채널[0]);
   document.getElementById('목록화면').style.display = 'none';
   document.getElementById('작성화면').style.display = 'block';
 
@@ -252,6 +267,21 @@ function 요청문다시() {
 function 고른채널() {
   var r = document.querySelector('input[name="채널"]:checked');
   return r ? r.value : '';
+}
+
+/**
+ * 아직 안 쓴 채널로 미리 맞춰 준다.
+ *
+ * 워드프레스는 써 놨고 티스토리만 남았는데 기본값이 워드프레스로
+ * 잡혀 있으면, 그대로 눌러서 같은 글을 또 쓰게 된다.
+ */
+function 채널고르기(이름) {
+  var 값 = (이름 === '티스토리') ? 'tistory' : 'wordpress';
+  var 단추 = document.querySelector('input[name="채널"][value="' + 값 + '"]');
+  if (단추) 단추.checked = true;
+  var 다른것 = document.querySelector(
+    'input[name="채널"][value="' + (값 === 'tistory' ? 'wordpress' : 'tistory') + '"]');
+  if (다른것) 다른것.checked = false;
 }
 
 /** 워드프레스와 티스토리를 모두 쓰는 카테고리에서만 선택칸을 보여준다. */
