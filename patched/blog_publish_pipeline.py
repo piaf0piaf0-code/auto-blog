@@ -21,7 +21,7 @@ import textwrap
 import warnings
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
@@ -1321,6 +1321,68 @@ def verify_wordpress_write_access(wp_url: str, username: str, app_password: str)
         )
 
 
+# ══════════════════════════════════════════════════════════
+#  워드프레스 예약 발행 (기본 꺼짐)
+#
+#  지금은 초안으로만 올린다. 그래서 회사에서 워드프레스에 들어가
+#  여덟 개를 손으로 발행해야 한다. 그 여덟 번이 같은 시각에 몰린다.
+#
+#  예약을 켜면 집에서 돌려 놓은 글이 정해진 시각에 하나씩 저절로
+#  공개된다. 회사에서 할 일이 티스토리만 남는다.
+#
+#  .env 에서 켠다. 비워 두면 지금처럼 초안으로만 올린다.
+#      WORDPRESS_SCHEDULE_START=07:00        첫 글이 올라갈 시각
+#      WORDPRESS_SCHEDULE_GAP_MINUTES=45     글 사이 간격
+#      WORDPRESS_SCHEDULE_CATEGORIES=        비우면 워드프레스 쓰는 전부
+#
+#  티스토리는 이보다 나중에 발행해야 '자세히 보기' 가 살아 있다.
+# ══════════════════════════════════════════════════════════
+
+_예약순번 = {"값": 0}
+
+
+def wordpress_schedule_categories() -> list[str]:
+    값 = os.getenv("WORDPRESS_SCHEDULE_CATEGORIES", "").strip()
+    return [부분.strip() for 부분 in 값.split(",") if 부분.strip()]
+
+
+def wordpress_schedule_enabled(category: str) -> bool:
+    if not os.getenv("WORDPRESS_SCHEDULE_START", "").strip():
+        return False
+    고른것 = wordpress_schedule_categories()
+    if not 고른것:
+        return True
+    이름 = str(category or "").strip()
+    return any(하나 in 이름 for 하나 in 고른것)
+
+
+def wordpress_schedule_time(category: str) -> str:
+    """이 글을 언제 공개할지. 켜져 있지 않으면 빈 글자."""
+    if not wordpress_schedule_enabled(category):
+        return ""
+    시각글자 = os.getenv("WORDPRESS_SCHEDULE_START", "").strip()
+    try:
+        시, 분 = [int(부분) for 부분 in 시각글자.split(":")[:2]]
+    except Exception:
+        logging.warning("WORDPRESS_SCHEDULE_START 를 읽지 못했습니다: %s", 시각글자)
+        return ""
+    try:
+        간격 = int(os.getenv("WORDPRESS_SCHEDULE_GAP_MINUTES", "45"))
+    except ValueError:
+        간격 = 45
+    간격 = max(5, 간격)
+
+    지금 = datetime.now()
+    첫글 = 지금.replace(hour=시, minute=분, second=0, microsecond=0)
+    # 그 시각이 이미 지났으면 내일로 넘긴다
+    if 첫글 <= 지금:
+        첫글 = 첫글 + timedelta(days=1)
+
+    이번 = 첫글 + timedelta(minutes=간격 * _예약순번["값"])
+    _예약순번["값"] += 1
+    return 이번.strftime("%Y-%m-%dT%H:%M:%S")
+
+
 def save_wordpress_draft(
     item: DraftItem,
     wp_url: str,
@@ -1363,6 +1425,11 @@ def save_wordpress_draft(
         "status": "draft",
         "excerpt": meta_description,
     }
+    예약시각 = wordpress_schedule_time(item.category)
+    if 예약시각:
+        payload["status"] = "future"
+        payload["date"] = 예약시각
+        logging.info("워드프레스 예약 발행: %s → %s", item.title[:30], 예약시각)
     if category_id:
         payload["categories"] = [int(category_id)]
     if tag_ids:
