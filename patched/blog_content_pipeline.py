@@ -2039,7 +2039,8 @@ def normalize_output(value: Any, max_length: int) -> str:
 
 
 def should_generate_tistory_variant(category: str) -> bool:
-    return any(part in category for part in ["최신이슈", "대출", "대출관련", "신장정신", "꿈해몽"])
+    return any(part in category for part in
+               ["최신이슈", "대출", "대출관련", "신장정신", "꿈해몽", "웰빙"])
 
 
 def tistory_audience_rules(category: str) -> str:
@@ -2059,6 +2060,13 @@ def tistory_audience_rules(category: str) -> str:
         return """
 - 대상 독자: 꿈 내용을 검색한 일반 독자. 실제 꿈해몽 전문가가 풀이하듯 상징, 감정, 현실 상황을 연결해 자세히 설명합니다.
 - 같은 주제라도 여러 꿈 장면을 나누어 구체적으로 해몽합니다.
+"""
+    if "웰빙" in category:
+        return """
+- 대상 독자: 건강을 챙기려는 일반인. 식단, 운동, 수면, 영양처럼 오늘 바로 해 볼 수 있는 것을 중심으로 씁니다.
+- 워드프레스 글이 자세한 설명이라면, 티스토리 글은 '무엇부터 하면 되는지' 를 먼저 알려 주는 실천 안내문으로 씁니다.
+- 같은 제목, 같은 소제목, 같은 문장을 반복하지 마세요.
+- 병을 고친다거나 낫는다는 표현은 쓰지 않습니다. 증상이 이어지면 병원에서 확인하라고 안내합니다.
 """
     return """
 - 대상 독자: 40대 이상 티스토리 독자. 너무 빠른 인터넷 밈 문체보다, 왜 화제인지와 지금 확인할 핵심을 차분하고 쉽게 설명합니다.

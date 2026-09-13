@@ -81,7 +81,11 @@ def tistory_category_label(item: DraftItem, target_url: str) -> str:
         # 꿈해몽은 dream_category_candidates 가 맡는다. 여기서 이름 하나로
         # 못 박으면 그 이름이 없는 블로그에서는 카테고리가 안 잡힌다.
         return ""
-    if "웰빙" in item.category or any(word in subject for word in ["건강", "음식", "영양", "다이어트"]):
+    if "웰빙" in item.category:
+        # 웰빙은 wellbeing_category_candidates 가 맡는다. 어느 블로그로 가든
+        # 붙도록 이름 하나로 못 박지 않는다.
+        return ""
+    if any(word in subject for word in ["건강", "음식", "영양", "다이어트"]):
         return "건강 음식 관련"
     if "신장" in item.category:
         return "이겨낼 불안 · 공황" if any(word in subject for word in ["불안", "공황"]) else "지켜볼 콩팥"
@@ -167,6 +171,28 @@ def dream_category_candidates(item: DraftItem) -> list[str]:
     return 정리
 
 
+def wellbeing_category_candidates(item: DraftItem) -> list[str]:
+    """웰빙 글에 붙일 티스토리 카테고리를 우선순위대로 돌려준다."""
+    글 = f"{item.keyword} {item.tistory_title or item.title}"
+    후보: list[str] = []
+    if any(말 in 글 for 말 in ["식단", "음식", "영양", "먹", "레시피", "채소", "단백질"]):
+        후보 += ["건강 음식 관련"]
+    if any(말 in 글 for 말 in ["운동", "근력", "걷기", "스트레칭", "다이어트", "체중"]):
+        후보 += ["운동 관련"]
+    if any(말 in 글 for 말 in ["수면", "잠", "불면", "피로"]):
+        후보 += ["수면 관련"]
+    후보 += ["건강 음식 관련", "건강 정보", "웰빙", "건강"]
+
+    본것: set[str] = set()
+    정리: list[str] = []
+    for 이름 in 후보:
+        if 이름 in 본것:
+            continue
+        본것.add(이름)
+        정리.append(이름)
+    return 정리
+
+
 def tistory_category_candidates(
     item: DraftItem, target_url: str, target_config: dict[str, Any]
 ) -> list[str]:
@@ -176,6 +202,8 @@ def tistory_category_candidates(
         return [설정]
     if "꿈" in item.category:
         return dream_category_candidates(item)
+    if "웰빙" in item.category:
+        return wellbeing_category_candidates(item)
     if normalized_host(target_url) == "finwiz.tistory.com":
         return finwiz_category_candidates(item)
     return []

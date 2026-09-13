@@ -239,7 +239,8 @@ function 글감열기(g) {
   document.getElementById('답변').value = '';
   document.getElementById('알림').innerHTML = '';
   // 남은 채널이 하나뿐이면 고를 것이 없다. 그것으로 바로 맞춘다.
-  var 두곳다 = ['최신이슈','정책지원','신장정신'].indexOf(g.카테고리) !== -1;
+  var 두곳다 = (g.쓰는채널 && g.쓰는채널.length === 2)
+              || ['최신이슈','정책지원','신장정신','웰빙'].indexOf(g.카테고리) !== -1;
   채널칸표시(두곳다);
   if (두곳다 && g.남은채널 && g.남은채널.length === 1) 채널고르기(g.남은채널[0]);
   document.getElementById('목록화면').style.display = 'none';
