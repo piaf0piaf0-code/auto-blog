@@ -465,7 +465,11 @@ def normalized_host(url: str) -> str:
 
 
 def wordpress_detail_link(item: DraftItem, target_config: dict[str, Any]) -> str:
-    """결과 URL 중 이 카테고리의 워드프레스 초안 주소만 골라냅니다."""
+    """결과 URL 중 이 카테고리의 워드프레스 초안 주소만 골라냅니다.
+
+    이 주소가 티스토리 글 아래 '자세히 보기' 로 들어간다. 워드프레스와
+    티스토리를 둘 다 쓰는 카테고리면 어디든 자동으로 붙는다.
+    """
     targets = resolve_publish_targets(item.category, target_config, "", "", "", None, DEFAULT_ADS_CONFIG_FILE)
     wordpress_hosts = {
         normalized_host(target.url)
@@ -473,12 +477,27 @@ def wordpress_detail_link(item: DraftItem, target_config: dict[str, Any]) -> str
         if target.platform == "wordpress" and normalized_host(target.url)
     }
     if not wordpress_hosts:
+        # 티스토리만 쓰는 카테고리(대출관련·꿈해몽)다. 걸 곳이 없다.
         return ""
 
     for candidate in item.result_link.splitlines():
         candidate = normalize_cell(candidate)
         if candidate.startswith(("http://", "https://")) and normalized_host(candidate) in wordpress_hosts:
+            if "?p=" in candidate or "&p=" in candidate:
+                # 워드프레스가 초안일 때 주는 주소다. 글을 공개 발행하면
+                # 이 주소가 최종 주소로 자동으로 넘어간다. 하지만 초안인
+                # 동안에는 독자에게 빈 화면이 뜬다.
+                logging.warning(
+                    "'자세히 보기' 가 워드프레스 초안 주소입니다: %s\n"
+                    "  워드프레스 글을 먼저 공개 발행해 주세요. 그 전에는 이 링크가 열리지 않습니다.\n"
+                    "  (공개 발행하면 이 주소가 최종 주소로 알아서 넘어갑니다)",
+                    candidate)
             return candidate
+
+    logging.info(
+        "'자세히 보기' 에 넣을 워드프레스 주소가 아직 없습니다: [%s] %s\n"
+        "  워드프레스 임시저장이 먼저 끝나야 주소가 생깁니다.",
+        item.category, item.title)
     return ""
 
 
