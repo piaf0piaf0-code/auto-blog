@@ -125,5 +125,46 @@ class TestSystemReport(unittest.TestCase):
             ui.yc.find_ffmpeg = original
 
 
+@unittest.skipUnless(HAS_GRADIO, "gradio 미설치")
+class TestAgainstVideoLength(unittest.TestCase):
+    """영상 길이를 넘는 구간은 만들기 전에 걸러야 한다.
+
+    2:37:45 짜리 영상에서 2:37:28~3:16:11 을 잡아도 아무 경고가 없었다.
+    """
+
+    INFO = {"duration": 9465}          # 2:37:45
+
+    def test_end_beyond_video(self):
+        msg = ui.duration_label("2:37:28", "3:16:11", self.INFO)
+        self.assertIn("영상 길이", msg)
+        self.assertIn("2:37:45", msg)
+
+    def test_start_beyond_video(self):
+        self.assertIn("시작 시간이 영상 길이", ui.duration_label("3:00:00", "3:00:30", self.INFO))
+
+    def test_inside_video_is_fine(self):
+        msg = ui.duration_label("1:30:00", "1:30:30", self.INFO)
+        self.assertIn("30.0초", msg)
+        self.assertIn("적당", msg)
+
+    def test_exactly_at_end_is_fine(self):
+        self.assertIn("45.0초", ui.duration_label("2:37:00", "2:37:45", self.INFO))
+
+    def test_without_video_info_still_works(self):
+        self.assertIn("40.0초", ui.duration_label("1:30", "2:10"))
+        self.assertIn("40.0초", ui.duration_label("1:30", "2:10", {}))
+
+
+@unittest.skipUnless(HAS_GRADIO, "gradio 미설치")
+class TestMoreErrorHints(unittest.TestCase):
+    def test_conversion_failed(self):
+        self.assertIn("짧게 줄여", ui.explain_error("Conversion failed!"))
+
+    def test_exited_with_code(self):
+        msg = ui.explain_error("ERROR: ffmpeg exited with code 1")
+        self.assertNotIn("설치되어 있지", msg)
+        self.assertIn("영상 처리 중 오류", msg)
+
+
 if __name__ == "__main__":
     unittest.main()

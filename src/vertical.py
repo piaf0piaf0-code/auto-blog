@@ -90,11 +90,61 @@ def escape_filter_path(path: str | Path) -> str:
     return f"'{text}'"
 
 
-def wrap_text(text: str, per_line: int = 16) -> str:
+# 문구가 들어갈 수 있는 최대 폭 (좌우 여백 제외)
+TEXT_MAX_WIDTH = TARGET_W - 110
+MAX_FONT_SIZE = 72
+MIN_FONT_SIZE = 34
+MAX_TEXT_LINES = 4
+
+
+def _char_width(ch: str, font_size: int) -> float:
+    """글자 하나의 대략적인 픽셀 폭.
+
+    한글·한자·가나는 정사각형에 가깝고(≈ 글자크기), 알파벳·숫자는 그 절반쯤이다.
+    정확한 값은 폰트마다 다르지만, 화면을 넘지 않게 크기를 줄이는 데는 충분하다.
+    """
+    code = ord(ch)
+    wide = (
+        0xAC00 <= code <= 0xD7A3       # 한글 음절
+        or 0x1100 <= code <= 0x11FF    # 한글 자모
+        or 0x3040 <= code <= 0x30FF    # 가나
+        or 0x4E00 <= code <= 0x9FFF    # 한자
+        or 0xFF01 <= code <= 0xFF60    # 전각 기호
+    )
+    return font_size * (1.0 if wide else 0.55)
+
+
+def estimate_width(line: str, font_size: int) -> float:
+    """한 줄이 차지할 대략적인 픽셀 폭."""
+    return sum(_char_width(ch, font_size) for ch in line)
+
+
+def fit_font_size(lines: list[str], max_width: int = TEXT_MAX_WIDTH) -> int:
+    """가장 긴 줄이 화면을 넘지 않는 글자 크기를 고른다.
+
+    이게 없으면 16자만 넘어도 좌우가 잘려 나간다.
+    """
+    if not lines:
+        return MAX_FONT_SIZE
+    for size in range(MAX_FONT_SIZE, MIN_FONT_SIZE - 1, -2):
+        if max(estimate_width(line, size) for line in lines) <= max_width:
+            return size
+    return MIN_FONT_SIZE
+
+
+def wrap_text(text: str, per_line: int = 14) -> str:
     """훅 문구를 화면 폭에 맞게 줄바꿈한다(drawtext 는 자동 줄바꿈이 없다)."""
-    words = str(text).strip().split()
+    words: list[str] = []
+    for word in str(text).strip().split():
+        # 띄어쓰기 없이 긴 말은 그대로 두면 화면을 넘으므로 잘라 넘긴다
+        while len(word) > per_line:
+            words.append(word[:per_line])
+            word = word[per_line:]
+        if word:
+            words.append(word)
     if not words:
         return ""
+
     lines: list[str] = []
     current = ""
     for word in words:
@@ -105,7 +155,7 @@ def wrap_text(text: str, per_line: int = 16) -> str:
             lines.append(current)
             current = word
     lines.append(current)
-    return "\n".join(lines[:4])       # 4줄까지만
+    return "\n".join(lines[:MAX_TEXT_LINES])
 
 
 def build_vertical_filter(
@@ -114,7 +164,7 @@ def build_vertical_filter(
     textfiles: list[Path] | None = None,
     font: str | None = None,
     position: str = "top",
-    font_size: int = 72,
+    font_size: int | None = None,
 ) -> str:
     """세로 변환 필터 문자열을 만든다."""
     if mode not in MODES:
@@ -146,6 +196,13 @@ def build_vertical_filter(
     if textfiles:
         if not font:
             raise ClipError("문구를 넣으려면 한글 폰트가 필요합니다.")
+        if font_size is None:
+            texts = [
+                Path(f).read_text(encoding="utf-8").strip()
+                if Path(f).exists() else ""
+                for f in textfiles
+            ]
+            font_size = fit_font_size(texts)
         base_y = TEXT_Y.get(position, TEXT_Y["top"])
         line_height = font_size + 22
         # 줄마다 따로 그린다 → 각 줄이 가운데 정렬된다
@@ -155,6 +212,9 @@ def build_vertical_filter(
                 f":textfile={escape_filter_path(textfile)}"
                 f":fontcolor=white:fontsize={font_size}"
                 f":borderw=6:bordercolor=black@0.85"
+                # expansion=none: 문구에 % 나 {} 가 있으면 그 줄이 통째로
+                # 사라진다("Stray %"). 문구는 글자 그대로 그린다.
+                f":expansion=none"
                 f":x=(w-text_w)/2:y={base_y + i * line_height}"
             )
     return chain

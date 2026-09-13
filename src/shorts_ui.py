@@ -155,6 +155,11 @@ ERROR_HINTS: list[tuple[str, str]] = [
     ("세로 변환 실패",
      "세로 변환에 실패했습니다. 구간을 짧게 줄이거나, [숏츠 모양] 에서 "
      "**위아래 검은 여백** 으로 바꿔 다시 시도해보세요."),
+    ("Conversion failed",
+     "영상을 변환하다가 실패했습니다. 구간을 짧게 줄여 다시 시도해보세요."),
+    ("exited with code",
+     "영상 처리 중 오류가 났습니다. 구간을 짧게 줄이거나, [숏츠 모양] 의 "
+     "변환 방식을 바꿔 다시 시도해보세요."),
     ("Postprocessing",
      "내려받은 뒤 영상을 합치는 단계에서 실패했습니다. 구간을 짧게 줄여 "
      "다시 시도해보세요."),
@@ -222,14 +227,30 @@ def parse_chapter_choice(choice: str) -> tuple[str, str]:
     return yc.format_human(start), yc.format_human(end)
 
 
-def duration_label(start: str, end: str) -> str:
-    """시작·끝 입력에 따라 길이와 숏츠 적합 여부를 알려준다."""
+def duration_label(start: str, end: str, info: dict | None = None) -> str:
+    """시작·끝 입력에 따라 길이와 숏츠 적합 여부를 알려준다.
+
+    영상을 불러왔다면 실제 길이와도 대조한다. 영상 끝을 넘는 구간은
+    받아봐야 실패하거나 엉뚱한 결과가 나오므로 여기서 걸러준다.
+    """
     if not start or not end:
         return "시작과 끝을 정해주세요."
     try:
         seg = yc.Segment(yc.parse_timecode(start), yc.parse_timecode(end))
     except yc.ClipError as e:
         return f"⚠️ {e}"
+
+    total = (info or {}).get("duration")
+    if total:
+        limit = yc.format_human(total)
+        if seg.start >= total:
+            return f"⚠️ 시작 시간이 영상 길이({limit})를 넘습니다."
+        if seg.end > total:
+            return (
+                f"⚠️ 끝 시간이 영상 길이({limit})를 넘습니다. "
+                f"끝을 {limit} 이하로 바꿔주세요."
+            )
+
     secs = seg.duration
     if secs > yc.SHORTS_MAX_SECONDS:
         note = f"숏츠 최대 {yc.SHORTS_MAX_SECONDS // 60}분을 넘습니다"
@@ -554,7 +575,11 @@ def build_app() -> gr.Blocks:
 
         # ── 길이 안내 ──
         for box in (start_box, end_box):
-            box.change(duration_label, inputs=[start_box, end_box], outputs=length_md)
+            box.change(
+                duration_label,
+                inputs=[start_box, end_box, info_state],
+                outputs=length_md,
+            )
 
 
         # ── AI 구간 추천 ──
@@ -621,7 +646,7 @@ def build_app() -> gr.Blocks:
 
         # ── 클립 만들기 ──
         def on_make(url, start, end, quality, audio_only, fast, cookies_browser,
-                    vertical, vmode, hook_text, text_pos):
+                    vertical, vmode, hook_text, text_pos, info):
             hidden = gr.update(visible=False)
             if not str(url).strip():
                 yield "⚠️ 링크를 넣어주세요.", hidden, hidden, hidden
@@ -635,17 +660,25 @@ def build_app() -> gr.Blocks:
                 yield f"⚠️ {e}", hidden, hidden, hidden
                 return
 
-            if segment.duration > yc.SHORTS_MAX_SECONDS:
+            total = (info or {}).get("duration")
+            if total and segment.end > total:
                 yield (
-                    f"⚠️ **{segment.duration / 60:.1f}분**짜리 구간입니다. "
-                    f"숏츠는 3분까지만 올라가고, 이 길이는 변환에 몇 분씩 걸리며 "
-                    f"실패하기도 쉽습니다. 그래도 진행합니다...",
+                    f"⚠️ 끝 시간({yc.format_human(segment.end)})이 영상 길이"
+                    f"({yc.format_human(total)})를 넘습니다. 끝 시간을 줄여주세요.",
                     hidden, hidden, hidden,
+                )
+                return
+
+            long_note = ""
+            if segment.duration > yc.SHORTS_MAX_SECONDS:
+                long_note = (
+                    f"\n\n⚠️ **{segment.duration / 60:.1f}분**짜리입니다. 숏츠는 "
+                    f"3분까지만 올라가고, 이 길이는 변환에 몇 분씩 걸립니다."
                 )
 
             yield (
                 f"⏳ {segment.label} 구간을 내려받아 자르는 중입니다... "
-                "(길이·화질에 따라 수십 초 걸립니다)",
+                f"(길이·화질에 따라 수십 초 걸립니다){long_note}",
                 hidden, hidden, hidden,
             )
             try:
@@ -668,6 +701,7 @@ def build_app() -> gr.Blocks:
 
             # 숏츠는 세로여야 유튜브가 숏츠로 인식한다.
             shape = "가로 원본"
+            note = ""
             if vertical and not audio_only:
                 yield (
                     f"⏳ 세로(9:16)로 바꾸는 중입니다... "
@@ -681,13 +715,29 @@ def build_app() -> gr.Blocks:
                     )
                     shape = "1080x1920 세로"
                 except yc.ClipError as e:
-                    yield explain_error(e), hidden, hidden, hidden
-                    return
+                    if not (hook_text or "").strip():
+                        yield explain_error(e), hidden, hidden, hidden
+                        return
+                    # 문구가 원인일 수 있으니 문구 없이 한 번 더 해본다.
+                    # 클립을 버리는 것보다 문구 없는 결과라도 건지는 게 낫다.
+                    yield (
+                        "⚠️ 문구를 넣다가 실패했습니다. 문구 없이 다시 시도합니다...",
+                        hidden, hidden, hidden,
+                    )
+                    try:
+                        path = vt.make_vertical(
+                            path, mode=vmode, text=None, replace=True
+                        )
+                        shape = "1080x1920 세로"
+                        note = " · ⚠️ 문구는 넣지 못했습니다"
+                    except yc.ClipError as e2:
+                        yield explain_error(e2), hidden, hidden, hidden
+                        return
 
             size_mb = path.stat().st_size / 1024 / 1024
             yield (
                 f"✅ 완료 — `{path.name}`\n\n"
-                f"{shape} · {segment.duration:.1f}초 · {size_mb:.1f}MB",
+                f"{shape} · {segment.duration:.1f}초 · {size_mb:.1f}MB{note}",
                 gr.update(value=str(path), visible=not audio_only),
                 gr.update(value=str(path), visible=True),
                 gr.update(visible=True),
@@ -709,7 +759,7 @@ def build_app() -> gr.Blocks:
         make_btn.click(
             on_make,
             inputs=[url_box, start_box, end_box, quality, audio_only, fast, cookies_browser,
-                    vertical, vmode, hook_text, text_pos],
+                    vertical, vmode, hook_text, text_pos, info_state],
             outputs=[status_md, result_video, result_file, open_btn],
         )
         open_btn.click(lambda: _open_folder(OUT_DIR), inputs=None, outputs=None)

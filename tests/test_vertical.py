@@ -91,5 +91,57 @@ class TestCommand(unittest.TestCase):
             v.make_vertical("없는파일.mp4")
 
 
+class TestTextDoesNotDisappear(unittest.TestCase):
+    """문구에 % 가 있으면 그 줄이 통째로 사라졌다 (ffmpeg "Stray %").
+
+    실제로 "이건 '진짜' 대박: 100% 실화" 를 넣었더니 "실화" 만 남았다.
+    """
+
+    def test_expansion_is_disabled(self):
+        f = v.build_vertical_filter("pad", textfiles=[Path("/tmp/l0.txt")], font="/f.ttf")
+        self.assertIn("expansion=none", f)
+
+    def test_every_line_gets_it(self):
+        files = [Path("/tmp/l0.txt"), Path("/tmp/l1.txt")]
+        f = v.build_vertical_filter("pad", textfiles=files, font="/f.ttf")
+        self.assertEqual(f.count("expansion=none"), 2)
+
+
+class TestTextFitsOnScreen(unittest.TestCase):
+    """16자만 넘어도 좌우가 잘려 나갔다."""
+
+    def test_long_line_shrinks_font(self):
+        lines = ["가나다라마바사아자차카타파하"]          # 14자
+        size = v.fit_font_size(lines)
+        self.assertLessEqual(v.estimate_width(lines[0], size), v.TEXT_MAX_WIDTH)
+
+    def test_short_line_keeps_max_size(self):
+        self.assertEqual(v.fit_font_size(["짧게"]), v.MAX_FONT_SIZE)
+
+    def test_never_below_minimum(self):
+        self.assertGreaterEqual(v.fit_font_size(["가" * 60]), v.MIN_FONT_SIZE)
+
+    def test_wrapped_lines_all_fit(self):
+        for text in [
+            "이건 '진짜' 대박: 100% 실화",
+            "가나다라마바사아자차카타파하가나다라마바사아자차카타파하",
+            "조회수 터진 이유 3가지",
+            "Why this clip went viral overnight",
+        ]:
+            with self.subTest(text=text):
+                lines = v.wrap_text(text).split("\n")
+                size = v.fit_font_size(lines)
+                widest = max(v.estimate_width(l, size) for l in lines)
+                self.assertLessEqual(widest, v.TEXT_MAX_WIDTH)
+
+    def test_long_word_without_spaces_is_split(self):
+        lines = v.wrap_text("가나다라마바사아자차카타파하가나다라마바사").split("\n")
+        self.assertGreater(len(lines), 1)
+        self.assertTrue(all(len(l) <= 14 for l in lines))
+
+    def test_korean_is_wider_than_latin(self):
+        self.assertGreater(v.estimate_width("가", 72), v.estimate_width("a", 72))
+
+
 if __name__ == "__main__":
     unittest.main()
