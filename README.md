@@ -85,6 +85,7 @@ python -m src.run_pipeline clip --url "https://youtu.be/XXXXXXXXXXX" \
 | 4 | [docs/04-콘텐츠-품질-체크리스트.md](docs/04-콘텐츠-품질-체크리스트.md) | 페널티 피하면서 자동화하는 기준 |
 | 5 | [docs/05-자동화-아키텍처.md](docs/05-자동화-아키텍처.md) | make.com + Claude + 워드프레스 설계 |
 | 6 | [docs/09-유튜브-숏츠-소재-추출.md](docs/09-유튜브-숏츠-소재-추출.md) | 유튜브 링크 → 구간 추출 → 세로 숏츠 영상 |
+| 7 | [docs/10-유튜브-추출-기술노트.md](docs/10-유튜브-추출-기술노트.md) | 구현 중 막힌 지점과 해법 (다른 작업 인계용) |
 
 ---
 
