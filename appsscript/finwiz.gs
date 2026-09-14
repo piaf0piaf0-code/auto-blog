@@ -42,7 +42,12 @@ var finwiz링크헤더 = ['ID', '글 제목', '상태', 'URL', '클러스터', '
 
 /** 주제별로 확인한 숫자를 모아 두는 탭. 같은 숫자를 167번 다시 찾지 않기 위한 것. */
 var finwiz사실탭 = 'finwiz_사실카드';
-var finwiz사실헤더 = ['클러스터', '항목', '값', '기준일', '출처URL'];
+// '기준일' 과 '확인일' 은 다르다.
+//   기준일 = 그 제도가 언제 것인가 (봇이 표에 적어 주는 값)
+//   확인일 = 사장님이 언제 확인해서 저장했나 (저장 버튼을 누른 날)
+// 오래됐는지는 '확인일' 로 따진다. 전에는 기준일로 따져서, 봇이 옛
+// 날짜를 적어 주면 방금 저장해도 '980일 지났습니다' 가 떴다.
+var finwiz사실헤더 = ['클러스터', '항목', '값', '기준일', '출처URL', '확인일'];
 
 /** 사실카드가 이만큼 지나면 '원문에서 다시 확인하라'고 요청문에 적는다. */
 var finwiz사실유효일 = 90;
@@ -107,11 +112,33 @@ function finwiz탭(이름, 헤더) {
     탭 = 문서.insertSheet(이름);
     탭.getRange(1, 1, 1, 헤더.length).setValues([헤더]);
     탭.setFrozenRows(1);
-  } else if (탭.getLastRow() === 0) {
+    return 탭;
+  }
+  if (탭.getLastRow() === 0) {
     탭.getRange(1, 1, 1, 헤더.length).setValues([헤더]);
     탭.setFrozenRows(1);
+    return 탭;
   }
+
+  // 나중에 칸이 늘어난 경우, 없는 머리글만 뒤에 붙인다.
+  // 이미 적혀 있는 머리글은 손대지 않는다.
+  var 지금열 = 탭.getLastColumn();
+  var 지금머리 = 탭.getRange(1, 1, 1, Math.max(지금열, 1)).getValues()[0];
+  var 채울것 = [];
+  for (var i = 0; i < 헤더.length; i++) {
+    if (!String(지금머리[i] || '').trim()) 채울것.push({ 자리: i + 1, 이름: 헤더[i] });
+  }
+  채울것.forEach(function (하나) {
+    탭.getRange(1, 하나.자리).setValue(하나.이름);
+  });
   return 탭;
+}
+
+/** 줄 길이를 머리글 개수에 맞춘다. 모자라면 빈칸으로 채운다. */
+function finwiz줄맞추기(한줄, 길이) {
+  var 나온것 = (한줄 || []).slice(0, 길이);
+  while (나온것.length < 길이) 나온것.push('');
+  return 나온것;
 }
 
 /**
@@ -470,11 +497,14 @@ function finwiz사실읽기() {
       var 항목 = String(줄[1] || '').trim();
       if (!클러스터 || !항목) return;
       if (!맵[클러스터]) 맵[클러스터] = [];
+      // 확인일 칸이 없던 때 저장한 줄은 기준일로 대신한다
+      var 확인일 = finwiz날짜글자(줄[5]);
       맵[클러스터].push({
         행: i + 2, 클러스터: 클러스터, 항목: 항목,
         값: String(줄[2] || '').trim(),
         기준일: finwiz날짜글자(줄[3]),
-        출처URL: String(줄[4] || '').trim()
+        출처URL: String(줄[4] || '').trim(),
+        확인일: 확인일 || finwiz날짜글자(줄[3])
       });
     });
   return 맵;
@@ -522,7 +552,7 @@ function finwiz카드상태(클러스터, 사실맵) {
   }
   var 최대 = -1, 오래된줄 = 0;
   줄들.forEach(function (하나) {
-    var d = finwiz며칠지났나(하나.기준일);
+    var d = finwiz며칠지났나(하나.확인일 || 하나.기준일);
     하나.지난날 = d;
     if (d > finwiz사실유효일) 오래된줄++;
     if (d > 최대) 최대 = d;
@@ -607,6 +637,8 @@ function finwiz사실카드요청문(클러스터) {
 
 /** 받은 표를 사실카드 탭에 넣는다. 그 주제의 기존 줄은 갈아끼운다. */
 function finwiz사실카드저장(클러스터, 답변) {
+  // 저장한 날이 곧 확인한 날이다. 봇이 적어 준 기준일과 섞지 않는다.
+  var 오늘글자 = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
   var 줄들 = [];
   String(답변 || '').split('\n').forEach(function (줄) {
     var t = 줄.trim();
@@ -620,7 +652,7 @@ function finwiz사실카드저장(클러스터, 답변) {
     if (!칸[0] || !칸[1]) return;
     if (/^https?:/.test(칸[0])) return;
     줄들.push([클러스터, 칸[0], 칸[1],
-               finwiz날짜글자(칸[2] || ''), finwiz주소만(칸[3])]);
+               finwiz날짜글자(칸[2] || ''), finwiz주소만(칸[3]), 오늘글자]);
   });
 
   if (!줄들.length) {
@@ -644,17 +676,19 @@ function finwiz사실카드저장(클러스터, 답변) {
     var 클 = String(한줄[0] || '').trim();
     var 항 = String(한줄[1] || '').trim();
     if (!클 || !항) return;
-    if (클 !== 클러스터) { 새것.push(한줄.slice(0, finwiz사실헤더.length)); return; }
+    if (클 !== 클러스터) { 새것.push(finwiz줄맞추기(한줄, finwiz사실헤더.length)); return; }
     var 열쇠 = finwiz소제목열쇠(항);
     var 받음 = 받은것[열쇠];
     if (받음) {
       쓴것[열쇠] = true; 채운수++;
       새것.push([클러스터, 항, 받음[2], 받음[3],
-                 받음[4] || String(한줄[4] || '').trim()]);
+                 받음[4] || String(한줄[4] || '').trim(), 오늘글자]);
     } else {
-      // 이번에 못 찾은 항목은 지우지 말고 빈 채로 둔다 (다음에 다시 시도)
+      // 이번에 못 찾은 항목은 지우지 말고 빈 채로 둔다 (다음에 다시 시도).
+      // 확인일도 그대로 둔다. 확인 안 했는데 오늘 확인한 것처럼 만들면 안 된다.
       새것.push([클러스터, 항, String(한줄[2] || '').trim(),
-                 finwiz날짜글자(한줄[3]), String(한줄[4] || '').trim()]);
+                 finwiz날짜글자(한줄[3]), String(한줄[4] || '').trim(),
+                 finwiz날짜글자(한줄[5])]);
     }
   });
 
@@ -676,6 +710,9 @@ function finwiz사실카드저장(클러스터, 답변) {
     탭.getRange(2, 1, 탭.getLastRow() - 1, 탭.getLastColumn()).clearContent();
   }
   if (새것.length) {
+    새것 = 새것.map(function (한줄) {
+      return finwiz줄맞추기(한줄, finwiz사실헤더.length);
+    });
     탭.getRange(2, 1, 새것.length, finwiz사실헤더.length).setValues(새것);
   }
   SpreadsheetApp.flush();
