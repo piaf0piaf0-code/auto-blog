@@ -74,6 +74,13 @@
 
 <div id="목록화면">
   <div class="안내" id="목록안내">불러오는 중입니다...</div>
+  <div id="전체카드줄" style="display:none; margin:10px 0 4px;">
+    <button onclick="전체카드만들기()">🧾 사실카드 전부 한 번에 만들기</button>
+    <div class="안내" style="margin-top:4px">
+      주제마다 따로 하면 14번입니다. 이 버튼은 한 요청문으로 묶어 줍니다.
+      한 번 해 두면 90일 동안 그대로 씁니다.
+    </div>
+  </div>
   <div id="글감들"></div>
 </div>
 
@@ -166,6 +173,8 @@ function 목록그리기(결과) {
   }
 
   GPT주소 = 결과.GPT주소 || '';
+  var 카드줄 = document.getElementById('전체카드줄');
+  if (카드줄) 카드줄.style.display = 'block';
   안내.innerHTML = '전체 ' + 결과.전체 + '편 중 <b>' + 결과.끝남 + '편</b> 끝냈고 '
                  + '<b>' + 결과.남음 + '편</b> 남았습니다. '
                  + '지금 링크로 걸 수 있는 글은 ' + 결과.주소있음 + '개입니다.'
@@ -315,6 +324,39 @@ function 목록으로() {
 // ── 사실카드 만들기 ─────────────────────────────────
 var 카드클러스터 = '';
 
+/**
+ * 주제 14개를 한 요청문으로 묶는다.
+ *
+ * 주제마다 따로 하면 14번이다. 항목 112개가 실제로는 공식 페이지
+ * 21곳에서 나오므로, 페이지별로 모아서 한 번에 물어보는 편이 낫다.
+ */
+function 전체카드만들기() {
+  카드클러스터 = '*전체*';
+  document.getElementById('카드제목').textContent = '🧾 사실카드 전부 한 번에';
+  document.getElementById('카드부제').textContent = '요청문을 만드는 중입니다...';
+  document.getElementById('카드요청문').value = '요청문을 만드는 중입니다...';
+  document.getElementById('카드답변').value = '';
+  document.getElementById('카드알림').innerHTML = '';
+  화면보이기('카드화면');
+
+  google.script.run
+    .withSuccessHandler(function (결과) {
+      document.getElementById('카드요청문').value = 결과.요청문;
+      document.getElementById('카드글수').textContent = 결과.글수;
+      document.getElementById('카드부제').textContent =
+        '주제 ' + 결과.주제수 + '개 · 확인할 항목 ' + 결과.항목수 + '개 · 공식 페이지 ' + 결과.페이지수 + '곳';
+      var 남은 = 결과.주제들.filter(function (하나) {
+        return 하나.채움 === 0 || 하나.오래됨;
+      });
+      document.getElementById('카드알림').innerHTML = 남은.length
+        ? '<div class="안내">아직 비었거나 오래된 주제 ' + 남은.length + '개: '
+          + 남은.map(function (하나) { return 안전(하나.이름); }).join(', ') + '</div>'
+        : '<div class="안내">모든 주제에 카드가 채워져 있습니다. 값을 새로 고치고 싶을 때만 하시면 됩니다.</div>';
+    })
+    .withFailureHandler(오류표시)
+    .finwiz전체카드요청문();
+}
+
 function 카드만들기(클러스터) {
   카드클러스터 = 클러스터;
   document.getElementById('카드제목').textContent = '🧾 ' + 클러스터 + ' 사실카드';
@@ -350,6 +392,47 @@ function 카드저장() {
     return;
   }
   버튼.disabled = true; 버튼.textContent = '저장하는 중...';
+
+  // 전체 한 번에 받은 표는 주제 칸이 하나 더 있다. 나눠서 저장한다.
+  if (카드클러스터 === '*전체*') {
+    google.script.run
+      .withSuccessHandler(function (결과) {
+        버튼.disabled = false; 버튼.textContent = '사실카드 저장';
+        if (!결과.성공) {
+          알림.innerHTML = '<div class="오류"><b>저장하지 않았습니다.</b><ul>'
+            + 결과.문제들.map(function (p) { return '<li>' + 안전(p) + '</li>'; }).join('')
+            + '</ul></div>';
+          return;
+        }
+        var 줄들 = 결과.결과들.map(function (하나) {
+          return '<li>' + 안전(하나.주제) + ' — ' + 하나.개수 + '개 채움'
+                 + (하나.아직 ? ' (아직 ' + 하나.아직 + '개)' : '') + '</li>';
+        }).join('');
+        var 덧말 = '';
+        if (결과.모르는주제 && 결과.모르는주제.length) {
+          덧말 += '<br><span class="안내">주제 칸을 못 알아본 것: '
+                + 결과.모르는주제.map(안전).join(', ') + '</span>';
+        }
+        if (결과.실패 && 결과.실패.length) {
+          덧말 += '<br><span class="안내">저장 못 한 주제: '
+                + 결과.실패.map(안전).join(' / ') + '</span>';
+        }
+        알림.innerHTML = '<div class="성공"><b>사실카드를 저장했습니다.</b><br>'
+          + '받은 줄 ' + 결과.읽은줄 + '개를 주제 ' + 결과.결과들.length + '개에 나눠 넣었습니다.'
+          + '<ul>' + 줄들 + '</ul>'
+          + '한 번에 다 못 받으셨으면, 나머지를 다시 받아 여기 붙여넣고 또 저장하시면 됩니다. '
+          + '이미 채운 값은 지워지지 않습니다.' + 덧말
+          + '<div class="줄"><button class="주" onclick="목록으로()">← 목록으로 돌아가 글쓰기</button></div>'
+          + '</div>';
+      })
+      .withFailureHandler(function (e) {
+        버튼.disabled = false; 버튼.textContent = '사실카드 저장';
+        오류표시(e);
+      })
+      .finwiz전체카드저장(답변);
+    return;
+  }
+
   google.script.run
     .withSuccessHandler(function (결과) {
       버튼.disabled = false; 버튼.textContent = '사실카드 저장';
