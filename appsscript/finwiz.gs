@@ -646,6 +646,69 @@ function finwiz사실카드요청문(클러스터) {
 //  채우고 나머지는 그대로 둔다. 여러 번 나눠 붙여넣어도 된다.
 // ══════════════════════════════════════════════════════════
 
+/**
+ * finwiz자료 파일이 제대로 붙어 있는지 본다.
+ *
+ * 붙여넣다가 뒷부분이 잘리면 맨 끝에 있는 finwiz카드틀 부터 사라진다.
+ * 그때 '카드 틀이 비어 있습니다' 만 보여 주면 무엇을 고쳐야 할지 모른다.
+ */
+function finwiz자료진단() {
+  var 볼것 = [
+    ['finwiz링크자료', typeof finwiz링크자료 !== 'undefined' ? (finwiz링크자료 || []).length : -1],
+    ['finwiz순서자료', typeof finwiz순서자료 !== 'undefined' ? (finwiz순서자료 || []).length : -1],
+    ['finwiz출처자료', typeof finwiz출처자료 !== 'undefined' ? (finwiz출처자료 || []).length : -1],
+    ['finwiz주제출처', typeof finwiz주제출처 !== 'undefined' ? Object.keys(finwiz주제출처 || {}).length : -1],
+    ['finwiz카드틀',   typeof finwiz카드틀   !== 'undefined' ? Object.keys(finwiz카드틀 || {}).length : -1]
+  ];
+  var 줄 = ['[finwiz자료 파일 상태]'];
+  var 없는것 = [];
+  볼것.forEach(function (하나) {
+    if (하나[1] < 0) { 줄.push('  ' + 하나[0] + ' : 없음'); 없는것.push(하나[0]); }
+    else 줄.push('  ' + 하나[0] + ' : ' + 하나[1] + '개');
+  });
+  if (없는것.length) {
+    줄.push('');
+    줄.push('finwiz자료 파일이 덜 붙여넣어진 것 같습니다. 462줄이어야 합니다.');
+    줄.push('Apps Script 에서 finwiz자료 를 열어 맨 아래 줄 번호를 확인해 주세요.');
+  }
+  return 줄.join('\n');
+}
+
+
+/**
+ * 카드 틀을 만든다. finwiz자료 의 틀을 먼저 쓰고, 없으면 대신 만든다.
+ *
+ * 틀이 없어도 아무것도 못 하게 두지는 않는다. 로드맵의 주제와 이미
+ * 만들어 둔 사실카드에서 항목을 끌어온다.
+ */
+function finwiz카드틀채우기(순서목록, 사실맵) {
+  var 있는틀 = (typeof finwiz카드틀 !== 'undefined' && finwiz카드틀) ? finwiz카드틀 : {};
+  if (Object.keys(있는틀).length) return 있는틀;
+
+  // 틀이 없다. 로드맵의 주제를 모으고, 이미 만든 카드에서 항목을 가져온다.
+  var 만든틀 = {};
+  순서목록.forEach(function (한줄) {
+    if (!한줄.클러스터) return;
+    if (!만든틀[한줄.클러스터]) 만든틀[한줄.클러스터] = [];
+  });
+
+  var 출처찾기 = {};
+  (typeof finwiz주제출처 !== 'undefined' ? finwiz주제출처 : {});
+  for (var 주제 in 만든틀) {
+    var 줄들 = (사실맵 || {})[주제] || [];
+    줄들.forEach(function (하나) {
+      if (하나.항목) 만든틀[주제].push([하나.항목, '']);
+    });
+    // 이미 만든 카드도 없으면, 그 주제에서 꼭 물어야 할 것을 기본으로 둔다
+    if (!만든틀[주제].length) {
+      만든틀[주제] = [['대출한도', ''], ['금리', ''], ['지원대상(소득·신용 요건)', ''],
+                      ['대출기간과 상환방식', ''], ['신청하는 곳', '']];
+    }
+  }
+  return 만든틀;
+}
+
+
 function finwiz전체카드요청문() {
   var 순서목록 = finwiz순서읽기();
   if (!순서목록.length) throw new Error('먼저 "📥 finwiz 로드맵 가져오기" 를 눌러 주세요.');
@@ -658,14 +721,19 @@ function finwiz전체카드요청문() {
     글수[한줄.클러스터] = (글수[한줄.클러스터] || 0) + 1;
   });
 
-  var 틀 = (typeof finwiz카드틀 !== 'undefined') ? finwiz카드틀 : {};
+  var 틀 = finwiz카드틀채우기(순서목록, 사실맵);
   var 주제들 = [];
   for (var 이름 in 틀) {
     var 상태 = finwiz카드상태(이름, 사실맵);
     주제들.push({ 이름: 이름, 항목: 틀[이름], 글수: 글수[이름] || 0,
                   채움: 상태.개수, 오래됨: 상태.오래됨 });
   }
-  if (!주제들.length) throw new Error('카드 틀이 비어 있습니다. finwiz자료 파일을 확인해 주세요.');
+  if (!주제들.length) {
+    throw new Error(
+      '만들 주제를 찾지 못했습니다.\n\n' +
+      finwiz자료진단() + '\n' +
+      '로드맵을 먼저 가져오셨는지 확인해 주세요.');
+  }
 
   // 출처(공식 페이지)마다 어떤 항목이 붙는지 모은다
   var 출처표 = {};
@@ -752,11 +820,11 @@ function finwiz전체카드요청문() {
  * 여러 번 나눠 붙여넣어도 된다. 받은 줄만 채우고 나머지는 그대로 둔다.
  */
 function finwiz전체카드저장(답변) {
-  var 틀 = (typeof finwiz카드틀 !== 'undefined') ? finwiz카드틀 : {};
+  var 틀 = finwiz카드틀채우기(finwiz순서읽기(), finwiz사실읽기());
   var 주제이름들 = [];
   for (var 이름 in 틀) 주제이름들.push(이름);
   if (!주제이름들.length) {
-    return { 성공: false, 문제들: ['카드 틀이 비어 있습니다.'] };
+    return { 성공: false, 문제들: ['만들 주제를 찾지 못했습니다. 로드맵을 먼저 가져와 주세요.'] };
   }
 
   // 주제 이름을 헐겁게 맞춘다 (띄어쓰기·기호 차이는 무시)
