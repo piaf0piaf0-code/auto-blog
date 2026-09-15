@@ -744,14 +744,76 @@ def ensure_wordpress_tags(
     return tag_ids
 
 
+def focus_keyword_candidates(item: DraftItem) -> list[str]:
+    """쓸 만한 포커스 키워드 후보를 앞선 것부터."""
+    조각: list[str] = []
+    for 값 in (item.focus_keyword, item.keyword):
+        for 하나 in re.split(r"[,|/·ㆍ\n]+", str(값 or "")):
+            하나 = re.sub(r"\s+", " ", 하나).strip()
+            if 하나 and 하나 not in 조각:
+                조각.append(하나)
+    return 조각
+
+
+def pick_focus_keyword(item: DraftItem) -> str:
+    """제목에 실제로 들어 있는 키워드를 고른다.
+
+    랭크매스는 포커스 키워드가 제목과 주소에 있어야 점수를 준다. 봇이
+    '만성콩팥병 관리법' 이라고 적었는데 제목이 '만성콩팥병 국가관리
+    법안…' 이면 둘 다 빨간불이 뜬다. 글은 멀쩡한데 점수만 깎인다.
+
+    무료판 랭크매스는 첫 번째 키워드만 채점한다. 그래서 하나만 남긴다.
+    """
+    후보들 = focus_keyword_candidates(item)
+    if not 후보들:
+        return ""
+    제목 = str(item.title or "")
+    제목열쇠 = re.sub(r"[^0-9A-Za-z가-힣]", "", 제목).lower()
+
+    # ① 제목에 통째로 들어 있는 것 중 가장 긴 것
+    맞는것 = [하나 for 하나 in 후보들
+              if re.sub(r"[^0-9A-Za-z가-힣]", "", 하나).lower() in 제목열쇠]
+    if 맞는것:
+        return max(맞는것, key=len)
+
+    # ② 없으면 후보의 낱말 중 제목에 있는 것들을 이어 붙여 만든다
+    for 하나 in 후보들:
+        말들 = [말 for 말 in re.split(r"\s+", 하나) if len(말) >= 2]
+        살린것 = [말 for 말 in 말들
+                  if re.sub(r"[^0-9A-Za-z가-힣]", "", 말).lower() in 제목열쇠]
+        if 살린것:
+            만든것 = " ".join(살린것)
+            logging.info("포커스 키워드를 제목에 맞춰 줄였습니다: %s → %s", 하나, 만든것)
+            return 만든것
+
+    # ③ 그래도 없으면 제목 앞머리 두 낱말
+    제목말 = [말 for 말 in re.split(r"[\s,|·]+", 제목) if len(말) >= 2]
+    if 제목말:
+        만든것 = " ".join(제목말[:2])
+        logging.warning(
+            "포커스 키워드 '%s' 가 제목에 없어 제목에서 새로 만들었습니다: %s\\n"
+            "  시트의 포커스 키워드 칸을 제목에 맞춰 고치시면 더 좋습니다.",
+            후보들[0], 만든것)
+        return 만든것
+    return 후보들[0]
+
+
+def keyword_slug(keyword: str) -> str:
+    """포커스 키워드로 주소를 만든다. 한글은 그대로 두고 띄어쓰기만 바꾼다."""
+    값 = re.sub(r"[^0-9A-Za-z가-힣\s-]", " ", str(keyword or ""))
+    값 = re.sub(r"\s+", "-", 값.strip()).strip("-").lower()
+    return 값[:70]
+
+
 def seo_meta_payload(item: DraftItem, description: str) -> dict[str, str]:
+    focus = pick_focus_keyword(item) or item.seo_keyword
     return {
         "rank_math_title": item.title,
         "rank_math_description": description,
-        "rank_math_focus_keyword": item.seo_keyword,
+        "rank_math_focus_keyword": focus,
         "_yoast_wpseo_title": item.title,
         "_yoast_wpseo_metadesc": description,
-        "_yoast_wpseo_focuskw": item.seo_keyword,
+        "_yoast_wpseo_focuskw": focus,
     }
 
 
@@ -787,17 +849,52 @@ def load_ads_config(config_path: str) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def parent_domains(domain: str) -> list[str]:
+    """saega2.seaga.co.kr → ['saega2.seaga.co.kr', 'seaga.co.kr']
+
+    'co.kr' 처럼 두 토막만 남는 것은 도메인이 아니라 접미사라 뺀다.
+    """
+    조각 = [부분 for 부분 in str(domain or "").split(".") if 부분]
+    만든것: list[str] = []
+    for i in range(len(조각)):
+        후보 = ".".join(조각[i:])
+        if 후보.count(".") < 1:
+            break
+        if 후보 in {"co.kr", "or.kr", "go.kr", "ne.kr", "pe.kr", "re.kr", "com.au", "co.uk"}:
+            break
+        만든것.append(후보)
+    return 만든것
+
+
 def ad_slots_for_domain(config: dict[str, Any], domain: str) -> list[dict[str, Any]]:
     if not config:
         return []
     excluded = {str(item).lower() for item in config.get("excluded_domains", [])}
-    if domain in excluded:
+    도메인들 = parent_domains(domain)
+    if any(하나 in excluded for 하나 in 도메인들):
         return []
 
-    domain_config = config.get("domains", {}).get(domain)
-    selected = domain_config if domain_config else config.get("default", {})
+    # saega2.seaga.co.kr 처럼 서브도메인으로 운영하는 사이트가 있다.
+    # 자기 이름이 없으면 윗 도메인(seaga.co.kr) 설정을 물려받는다.
+    # 전에는 못 찾고 default 로 갔고, default 가 꺼져 있으면 광고가 아예 안 붙었다.
+    설정들 = config.get("domains", {})
+    for 하나 in 도메인들:
+        if 하나 in 설정들:
+            if 하나 != domain:
+                logging.info("광고 설정: %s 가 없어 %s 설정을 씁니다.", domain, 하나)
+            selected = 설정들[하나]
+            if not selected.get("enabled", False):
+                logging.info("광고가 꺼져 있습니다: %s", 하나)
+                return []
+            return list(selected.get("slots", []))
+
+    selected = config.get("default", {})
     if not selected.get("enabled", False):
+        logging.warning(
+            "ads_config.json 에 %s 설정이 없고 default 도 꺼져 있어 광고를 넣지 않습니다.\n"
+            "  넣으시려면 domains 에 \"%s\" 를 추가하세요.", domain, domain)
         return []
+    logging.info("광고 설정: %s 가 없어 default 를 씁니다.", domain)
     return list(selected.get("slots", []))
 
 
@@ -1425,6 +1522,11 @@ def save_wordpress_draft(
         "status": "draft",
         "excerpt": meta_description,
     }
+    # 주소에도 포커스 키워드가 들어가야 랭크매스가 통과시킨다.
+    # 워드프레스가 알아서 만드는 주소는 제목 전체라 키워드가 묻힌다.
+    슬러그 = keyword_slug(pick_focus_keyword(item))
+    if 슬러그:
+        payload["slug"] = 슬러그
     예약시각 = wordpress_schedule_time(item.category)
     if 예약시각:
         payload["status"] = "future"
