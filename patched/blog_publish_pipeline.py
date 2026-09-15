@@ -20,6 +20,7 @@ import tempfile
 import textwrap
 import warnings
 import xml.etree.ElementTree as ET
+from html import unescape as html_unescape
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
@@ -619,10 +620,90 @@ def strip_citation_marks(html: str) -> str:
     return 바뀐것
 
 
+# ══════════════════════════════════════════════════════════
+#  본문에 남은 '광고 위치' 표시 지우기
+#
+#  봇이 글을 쓸 때 "여기에 광고를 넣으세요" 라고 자리만 표시해 준다.
+#
+#      광고 위치
+#      [광고 추천 위치 1]
+#      ## **[이곳에 애드센스 디스플레이 광고 삽입 위치 1]**
+#
+#  광고는 발행 도구가 문단 수를 세어 알아서 넣는다. 이 표시가 글에
+#  남으면 읽는 사람 눈에 '광고 위치' 라는 글자가 그대로 보인다.
+#  시트에 넣을 때 한 번 거르지만, 대괄호 없이 맨몸으로 적혀 오면
+#  그물을 빠져나간다. 그래서 발행 직전에 한 번 더 거른다.
+# ══════════════════════════════════════════════════════════
+
+# 광고 자리표에만 나오는 낱말들. 이 낱말로만 이루어진 짧은 문단을 지운다.
+광고자리말 = {
+    "광고", "광고위치", "광고자리", "광고삽입", "광고영역", "광고구간", "광고배너",
+    "애드센스", "애드핏", "adsense", "adfit", "ad", "ads", "adslot", "slot",
+    "디스플레이", "display", "인피드", "인아티클", "네이티브",
+    "위치", "자리", "삽입", "영역", "추천", "슬롯", "배너", "banner", "구간",
+    "이곳", "이곳에", "여기", "여기에", "표시", "권장", "번째", "번",
+}
+광고핵심말 = {"광고", "광고위치", "광고자리", "광고삽입", "광고영역", "광고구간",
+              "광고배너", "애드센스", "애드핏", "adsense", "adfit", "ad", "ads",
+              "adslot"}
+광고자리한도 = 60  # 이보다 긴 문단은 진짜 본문으로 본다
+
+
+def 광고자리표인가(글자: str) -> bool:
+    """이 문단이 광고 자리표뿐인가."""
+    본문 = re.sub(r"\s+", " ", 글자 or "").strip()
+    if not 본문 or len(본문) > 광고자리한도:
+        return False
+    # '광고 위치 추천 1: 서론이 끝난 뒤' 처럼 뒤에 설명이 붙은 경우 앞부분만 본다
+    앞부분 = re.split(r"[:：]", 본문, 1)[0]
+    말들 = [말 for 말 in re.split(r"[^0-9A-Za-z가-힣]+", 앞부분) if 말]
+    if not 말들:
+        return False
+    낮춘말 = [말.lower() for 말 in 말들]
+    if not any(말 in 광고핵심말 for 말 in 낮춘말):
+        return False
+    return all(말.isdigit() or 말 in 광고자리말 for 말 in 낮춘말)
+
+
+def strip_ad_placeholders(html: str) -> str:
+    """본문에 남은 광고 자리표 문단을 통째로 지운다."""
+    if os.getenv("STRIP_AD_PLACEHOLDERS", "true").lower() not in {"1", "true", "yes", "y"}:
+        return html
+    if not html:
+        return html
+
+    지운수 = {"값": 0}
+
+    def 한덩어리(m: re.Match[str]) -> str:
+        속 = re.sub(r"<[^>]+>", " ", m.group(2))
+        속 = html_unescape(속)
+        if 광고자리표인가(속):
+            지운수["값"] += 1
+            return ""
+        return m.group(0)
+
+    바뀐것 = re.sub(
+        r"<(p|h[1-6]|div|blockquote)\b[^>]*>(.*?)</\1>",
+        한덩어리, html, flags=re.IGNORECASE | re.DOTALL)
+
+    # 태그 없이 한 줄로만 적혀 온 경우
+    줄들 = []
+    for 줄 in 바뀐것.split("\n"):
+        if "<" not in 줄 and 광고자리표인가(줄):
+            지운수["값"] += 1
+            continue
+        줄들.append(줄)
+    바뀐것 = "\n".join(줄들)
+
+    if 지운수["값"]:
+        logging.info("본문의 '광고 위치' 표시를 지웠습니다: %s군데", 지운수["값"])
+    return 바뀐것
+
+
 def sanitize_body_links(html: str) -> str:
     if os.getenv("LINK_CHECK_ENABLED", "true").lower() not in {"1", "true", "yes", "y"}:
-        # 링크 검사를 꺼도 각주 표시는 지운다. 둘은 별개의 문제다.
-        return strip_citation_marks(html)
+        # 링크 검사를 꺼도 각주·광고 표시는 지운다. 셋은 별개의 문제다.
+        return strip_ad_placeholders(strip_citation_marks(html))
 
     cache: dict[str, str] = {}
 
@@ -635,7 +716,7 @@ def sanitize_body_links(html: str) -> str:
         return f"href={quote}{checked}{quote}"
 
     html = re.sub(r"href=(['\"])(.*?)\1", replace_href, html, flags=re.IGNORECASE)
-    return strip_citation_marks(html)
+    return strip_ad_placeholders(strip_citation_marks(html))
 
 
 def parse_meta_description_and_tags(meta_text: str, keyword: str, category: str) -> tuple[str, list[str]]:
@@ -822,6 +903,16 @@ def focus_keyword_candidates(item: DraftItem) -> list[str]:
     return 조각
 
 
+# 혼자 쓰면 아무 뜻이 없는 낱말들. 포커스 키워드로 쓰지 않는다.
+흔한낱말 = {
+    "식품", "음식", "정보", "방법", "이유", "기준", "가격", "순위", "비교",
+    "효과", "증상", "관리", "신청", "조건", "혜택", "종류", "특징", "사용",
+    "추천", "선택", "차이", "시간", "경우", "문제", "내용", "상태", "변화",
+    "시작", "정리", "확인", "필요", "가능", "중요", "생각", "사람", "우리",
+    "오늘", "이번", "최근", "요즘", "관련", "기타", "일반", "생활", "건강",
+}
+
+
 def pick_focus_keyword(item: DraftItem) -> str:
     """제목에 실제로 들어 있는 키워드를 고른다.
 
@@ -844,22 +935,30 @@ def pick_focus_keyword(item: DraftItem) -> str:
         return max(맞는것, key=len)
 
     # ② 없으면 후보의 낱말 중 제목에 있는 것들을 이어 붙여 만든다
+    #
+    #    단, 여기서 '식품' '정보' 처럼 흔한 낱말 하나만 남으면 쓸모가 없다.
+    #    시트의 키워드 칸에 뉴스 제목이 통째로 들어왔을 때 이런 일이
+    #    생긴다. 그때는 차라리 제목 앞머리를 쓰는 편이 낫다.
     for 하나 in 후보들:
         말들 = [말 for 말 in re.split(r"\s+", 하나) if len(말) >= 2]
         살린것 = [말 for 말 in 말들
                   if re.sub(r"[^0-9A-Za-z가-힣]", "", 말).lower() in 제목열쇠]
-        if 살린것:
-            만든것 = " ".join(살린것)
-            logging.info("포커스 키워드를 제목에 맞춰 줄였습니다: %s → %s", 하나, 만든것)
-            return 만든것
+        if not 살린것:
+            continue
+        if len(살린것) == 1 and 살린것[0] in 흔한낱말:
+            logging.info("'%s' 는 너무 흔한 낱말이라 포커스 키워드로 쓰지 않습니다.", 살린것[0])
+            continue
+        만든것 = " ".join(살린것)
+        logging.info("포커스 키워드를 제목에 맞춰 줄였습니다: %s → %s", 하나, 만든것)
+        return 만든것
 
     # ③ 그래도 없으면 제목 앞머리 두 낱말
     제목말 = [말 for 말 in re.split(r"[\s,|·]+", 제목) if len(말) >= 2]
     if 제목말:
         만든것 = " ".join(제목말[:2])
         logging.warning(
-            "포커스 키워드 '%s' 가 제목에 없어 제목에서 새로 만들었습니다: %s\\n"
-            "  시트의 포커스 키워드 칸을 제목에 맞춰 고치시면 더 좋습니다.",
+            "포커스 키워드 '%s' 가 제목에 없어 제목에서 새로 만들었습니다: %s"
+            " (시트의 포커스 키워드 칸을 제목에 맞춰 고치시면 더 좋습니다)",
             후보들[0], 만든것)
         return 만든것
     return 후보들[0]
@@ -1369,11 +1468,18 @@ def generate_thumbnail(item: DraftItem) -> Path | None:
             y += 92
 
         # 이미지에 '핵심 키워드:' 같은 안내말은 넣지 않는다. 읽는 사람에게
-        # 아무 뜻이 없고, 기계가 만든 티만 난다. 키워드만 조용히 적는다.
-        keyword_text = re.sub(r"\s+", " ", item.seo_keyword or "").strip()
+        # 아무 뜻이 없고, 기계가 만든 티만 난다.
+        #
+        # 시트의 키워드 칸에는 뉴스 제목이 통째로 들어와 있을 때가 많다.
+        # ('오렌지만 떠올렸는데...비타민C 풍부한 의외의 식품 4')
+        # 그걸 아래에 잘라 붙이면 말이 끊긴 채로 남아 더 지저분하다.
+        # 그래서 제목과 맞춘 짧은 키워드만, 그것도 깔끔할 때만 적는다.
+        keyword_text = re.sub(r"\s+", " ", pick_focus_keyword(item) or "").strip()
+        if len(keyword_text) > 30 or "..." in keyword_text or "…" in keyword_text:
+            keyword_text = ""
         draw.line((margin, height - 128, width - margin, height - 128), fill=accent, width=5)
         if keyword_text:
-            draw.text((margin, height - 94), keyword_text[:60], fill=(67, 80, 91), font=small_font)
+            draw.text((margin, height - 94), keyword_text, fill=(67, 80, 91), font=small_font)
 
         output_dir = ensure_thumbnail_dir()
         output_path = output_dir / safe_filename(item.keyword or item.title)
@@ -2466,6 +2572,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+파일판 = "2026-09-15"
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -2475,6 +2584,8 @@ def main() -> None:
         level=getattr(logging, args.log_level),
         format="%(asctime)s %(levelname)s %(message)s",
     )
+    # 새 파일을 덮어썼는지 눈으로 바로 확인할 수 있게 판번호를 찍는다
+    logging.info("발행 도구 판번호: %s", 파일판)
 
     credentials_path = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
     spreadsheet_id = os.getenv("SPREADSHEET_ID", SPREADSHEET_ID)
