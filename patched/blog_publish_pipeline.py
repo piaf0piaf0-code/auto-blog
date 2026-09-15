@@ -554,9 +554,75 @@ def safe_body_link(url: str, cache: dict[str, str]) -> str:
     return cache[url]
 
 
+# ══════════════════════════════════════════════════════════
+#  본문에 남은 각주·참고표시 지우기
+#
+#  봇이 웹 검색을 하면 문장 끝에 이런 표시를 남긴다.
+#
+#      ([메사추세츠 제너럴 브리검 뉴스][1])
+#      ([연합뉴스][2])
+#      [1]  【3†source】  [^2]  ([출처](https://...))
+#
+#  봇이 보는 화면에서는 각주로 접히지만, 붙여넣으면 그냥 글자로 남는다.
+#  읽는 사람에게는 뜻 없는 기호이고, 검색엔진에도 좋지 않다.
+#  출처는 본문 안의 링크와 맨 아래 출처 목록으로 이미 들어가 있다.
+# ══════════════════════════════════════════════════════════
+
+각주무늬 = [
+    # ([언론사 이름][1])  ([언론사][12])
+    re.compile(r"[（(]\s*\[[^\]\[]{1,40}\]\s*\[\d{1,3}\]\s*[）)]"),
+    # ([언론사 이름](https://...))  — 괄호 통째로 감싼 링크
+    re.compile(r"[（(]\s*\[[^\]\[]{1,40}\]\(https?://[^\s)]+\)\s*[）)]"),
+    # 【3†source】 【12:0†제목】
+    re.compile(r"【[^】]{0,40}†[^】]{0,60}】"),
+    # [^1] [^주1]
+    re.compile(r"\[\^[^\]]{1,10}\]"),
+    # 문장 끝에 홀로 남은 [1] [2][3]  (앞이 글자나 문장부호일 때만)
+    re.compile(r"(?<=[가-힣A-Za-z0-9%.。,，)\]”’\"'])\s*(?:\[\d{1,3}\]){1,4}"),
+    # (출처: [1])  (참고: [2])
+    re.compile(r"[（(]\s*(?:출처|참고|자료)\s*[:：]?\s*(?:\[\d{1,3}\]\s*){1,4}[）)]"),
+]
+
+
+def strip_citation_marks(html: str) -> str:
+    """본문에 남은 각주 표시를 지운다. 진짜 링크(<a>)는 건드리지 않는다."""
+    if os.getenv("STRIP_CITATION_MARKS", "true").lower() not in {"1", "true", "yes", "y"}:
+        return html
+    if not html:
+        return html
+
+    원래길이 = len(html)
+    # <a> 태그 안은 손대지 않는다. 태그 밖의 글자만 훑는다.
+    조각들 = re.split(r"(<a\b[^>]*>.*?</a>|<[^>]+>)", html, flags=re.IGNORECASE | re.DOTALL)
+    for i, 조각 in enumerate(조각들):
+        if not 조각 or 조각.startswith("<"):
+            continue
+        for 무늬 in 각주무늬:
+            조각 = 무늬.sub("", 조각)
+        # 지우고 남은 빈 괄호와 겹친 공백 정리
+        조각 = re.sub(r"[（(]\s*[）)]", "", 조각)
+        조각 = re.sub(r"[ \t]{2,}", " ", 조각)
+        조각 = re.sub(r"\s+([.,。，!?])", r"\1", 조각)
+        조각들[i] = 조각
+    바뀐것 = "".join(조각들)
+
+    # 표시를 떼어내고 남은 자투리 공백을 태그 경계에서 정리한다
+    바뀐것 = re.sub(r"[ \t]+(</[A-Za-z])", r"\1", 바뀐것)
+    바뀐것 = re.sub(r"(<(?:p|li|td|th|h[1-6]|div|figcaption)\b[^>]*>)[ \t]+", r"\1", 바뀐것, flags=re.IGNORECASE)
+
+    # 지우고 나서 빈 껍데기만 남은 문단은 통째로 없앤다
+    바뀐것 = re.sub(r"<(p|li)>\s*</\1>", "", 바뀐것, flags=re.IGNORECASE)
+
+    지운수 = 원래길이 - len(바뀐것)
+    if 지운수 > 0:
+        logging.info("본문의 각주 표시를 지웠습니다: %s자", 지운수)
+    return 바뀐것
+
+
 def sanitize_body_links(html: str) -> str:
     if os.getenv("LINK_CHECK_ENABLED", "true").lower() not in {"1", "true", "yes", "y"}:
-        return html
+        # 링크 검사를 꺼도 각주 표시는 지운다. 둘은 별개의 문제다.
+        return strip_citation_marks(html)
 
     cache: dict[str, str] = {}
 
@@ -568,7 +634,8 @@ def sanitize_body_links(html: str) -> str:
         checked = safe_body_link(href, cache)
         return f"href={quote}{checked}{quote}"
 
-    return re.sub(r"href=(['\"])(.*?)\1", replace_href, html, flags=re.IGNORECASE)
+    html = re.sub(r"href=(['\"])(.*?)\1", replace_href, html, flags=re.IGNORECASE)
+    return strip_citation_marks(html)
 
 
 def parse_meta_description_and_tags(meta_text: str, keyword: str, category: str) -> tuple[str, list[str]]:
