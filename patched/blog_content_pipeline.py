@@ -47,6 +47,13 @@ except Exception as _v2오류:  # pragma: no cover
         "article_v2.py 가 없어 두 단계 글쓰기는 건너뜁니다: %s", _v2오류)
 
 try:
+    import web_research
+except Exception as _검색오류:  # pragma: no cover
+    web_research = None
+    logging.getLogger(__name__).info(
+        "web_research.py 가 없어 모델 웹검색은 건너뜁니다: %s", _검색오류)
+
+try:
     import dream_links
 except Exception as _꿈링크오류:  # pragma: no cover
     dream_links = None
@@ -913,7 +920,14 @@ def representative_link(keyword: str, category: str, source_link: str = "") -> s
     return f"https://www.google.com/search?q={encoded}"
 
 
-def build_research_context(keyword: str, category: str, source_link: str = "") -> ResearchContext:
+def build_research_context(
+    keyword: str,
+    category: str,
+    source_link: str = "",
+    client: Any = None,
+    model: str = "",
+    longtails: str = "",
+) -> ResearchContext:
     source_news_notes = ""
     source_news_snippet = ""
     if is_saega2_health_news_item(category, source_link):
@@ -965,6 +979,21 @@ def build_research_context(keyword: str, category: str, source_link: str = "") -
     if not link:
         link = representative_link(keyword, category, source_link)
     link = safe_representative_link(link)
+
+    # ── 모델에게 직접 검색을 시킨다 ──────────────────────
+    # 위의 재료는 파이썬이 긁어 온 것이라, 검색어에 걸린 페이지의
+    # 앞부분밖에 못 본다. 모델은 항목마다 따로 검색하고 표까지 읽는다.
+    # 손으로 챗봇에 넣었을 때 구체적인 글이 나오던 이유가 이것이다.
+    if client is not None and web_research is not None:
+        try:
+            검색재료 = web_research.gather(client, model, keyword, category, longtails)
+        except Exception as 오류:
+            logging.warning("모델 웹검색에 실패해 기존 재료로만 씁니다: %s", 오류)
+            검색재료 = ""
+        if 검색재료:
+            source_notes = "\n\n".join(
+                부분 for 부분 in ["[검색으로 확인한 자료]\n" + 검색재료, source_notes]
+                if 부분 and "확인 실패" not in 부분)
 
     return ResearchContext(link=link, snippets=snippets, source_notes=source_notes)
 
@@ -1150,8 +1179,17 @@ def choose_representative_result(keyword: str, category: str, results: list[dict
     return results[0].get("link", "") if results else ""
 
 
-def fetch_source_notes(results: list[dict[str, str]], limit: int = 3) -> str:
+def source_note_page_limit() -> int:
+    try:
+        return max(1, int(os.getenv("SOURCE_NOTE_PAGES", "5")))
+    except ValueError:
+        return 5
+
+
+def fetch_source_notes(results: list[dict[str, str]], limit: int | None = None) -> str:
     notes: list[str] = []
+    if limit is None:
+        limit = source_note_page_limit()
     for item in results[:limit]:
         url = item.get("link", "")
         if not url.startswith(("http://", "https://")):
@@ -1197,12 +1235,71 @@ def fetch_single_source_note_once(url: str, fallback_title: str, verify: bool) -
         meta = normalize_cell(meta_tag.get("content"))
 
     headings = [normalize_cell(h.get_text(" ", strip=True)) for h in soup.find_all(["h1", "h2"], limit=8)]
-    paragraphs = [normalize_cell(p.get_text(" ", strip=True)) for p in soup.find_all("p", limit=12)]
-    text_parts = [part for part in [meta, *headings, *paragraphs] if part]
+
+    # ── 본문을 어디서 읽을지 ──────────────────────────────
+    # 예전에는 soup.find_all("p", limit=12) 로 앞 12문단만 읽었다.
+    # 한국 뉴스·기관 사이트는 앞 12문단이 대개 메뉴·기자 이름·관련기사다.
+    # 게다가 본문을 <p> 가 아니라 <div> 안에 <br> 로 흘려 쓰는 곳이 많다.
+    # 그래서 '읽어 온 내용' 이 껍데기뿐이었다.
+    본문틀 = None
+    for 이름 in ("article", "main"):
+        본문틀 = soup.find(이름)
+        if 본문틀:
+            break
+    if 본문틀 is None:
+        for 표시 in ("article-body", "articleBody", "news_body", "newsct_article",
+                     "article_body", "articleCont", "cont_view", "view_con",
+                     "article-view-content-div", "board-view", "se-main-container"):
+            본문틀 = soup.find(attrs={"id": 표시}) or soup.find(attrs={"class": 표시})
+            if 본문틀:
+                break
+    바탕 = 본문틀 or soup
+
+    paragraphs = [normalize_cell(item.get_text(" ", strip=True))
+                  for item in 바탕.find_all("p", limit=source_note_paragraph_limit())]
+
+    # 목록도 재료다. '필요서류', '지원대상' 은 거의 <li> 로 적힌다.
+    list_items = [normalize_cell(item.get_text(" ", strip=True))
+                  for item in 바탕.find_all("li", limit=40)]
+    list_items = [item for item in list_items if 6 <= len(item) <= 200]
+
+    # ── 표를 읽는다 ───────────────────────────────────────
+    # 은행 금리 비교, 지원금 구간, 소득 기준은 거의 표 안에 있다.
+    # 표를 못 읽으면 '가장 싼 은행이 어디인지' 를 영영 알 수 없다.
+    # 이것이 글이 두루뭉술해진 가장 큰 이유였다.
+    tables: list[str] = []
+    for table in 바탕.find_all("table", limit=4):
+        줄들 = []
+        for tr in table.find_all("tr", limit=25):
+            칸 = [normalize_cell(td.get_text(" ", strip=True))
+                  for td in tr.find_all(["th", "td"])]
+            칸 = [하나 for 하나 in 칸 if 하나]
+            if 칸:
+                줄들.append(" | ".join(칸))
+        if 줄들:
+            tables.append("[표] " + " / ".join(줄들))
+
+    text_parts = [part for part in [meta, *headings, *paragraphs, *list_items, *tables] if part]
     summary = " ".join(text_parts)
-    summary = re.sub(r"\s+", " ", summary)[:1400]
+    summary = re.sub(r"\s+", " ", summary)[:source_note_char_limit()]
 
     return f"출처: {title}\nURL: {url}\n확인한 내용: {summary}"
+
+
+def source_note_paragraph_limit() -> int:
+    """한 페이지에서 읽을 문단 수. 예전 값 12는 메뉴만 읽고 끝났다."""
+    try:
+        return max(12, int(os.getenv("SOURCE_NOTE_PARAGRAPHS", "60")))
+    except ValueError:
+        return 60
+
+
+def source_note_char_limit() -> int:
+    """한 페이지에서 가져올 글자 수. 예전 값 1400은 표까지 담기엔 짧다."""
+    try:
+        return max(1400, int(os.getenv("SOURCE_NOTE_CHARS", "4000")))
+    except ValueError:
+        return 4000
 
 
 def requests_quote(value: str) -> str:
@@ -1448,6 +1545,87 @@ JSON 문자열 안의 큰따옴표는 반드시 이스케이프하고, 잘리지
 """.strip()
 
 
+# ══════════════════════════════════════════════════════════
+#  분량은 재료가 정한다
+#
+#  "7,000~9,000자로 쓰세요" 를 재료 없이 시키면 모델이 할 수 있는 일은
+#  같은 말을 바꿔 쓰는 것뿐이다. 두루뭉술한 글은 모델이 게을러서가
+#  아니라 산수의 결과다. 재료가 얇으면 분량도 줄여야 한다.
+#
+#  .env 로 되돌릴 수 있다.
+#      LENGTH_FOLLOWS_MATERIAL=0     예전처럼 늘 7,000~9,000자
+# ══════════════════════════════════════════════════════════
+
+def 분량이재료를따르나() -> bool:
+    return os.getenv("LENGTH_FOLLOWS_MATERIAL", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def 재료무게(research: "ResearchContext | None") -> tuple[int, int]:
+    """(확인된 사실 줄 수, 재료 글자 수)"""
+    if research is None:
+        return 0, 0
+    재료 = "\n".join(부분 for 부분 in [research.snippets, research.source_notes] if 부분)
+    줄수 = 0
+    if web_research is not None:
+        try:
+            줄수 = len(web_research.확인된줄(재료))
+        except Exception:
+            줄수 = 0
+    return 줄수, len(재료)
+
+
+def 분량지시(research: "ResearchContext | None") -> str:
+    """재료 양에 맞춘 분량 지시 한 덩어리."""
+    if not 분량이재료를따르나():
+        return "5. HTML 본문은 기존보다 훨씬 길게 7000~9000자 정도로 작성하세요."
+
+    줄수, 글자수 = 재료무게(research)
+    if 줄수 >= 8 or 글자수 >= 12000:
+        범위 = "5,000~7,000자"
+        덧붙임 = "재료가 넉넉합니다. 확인된 값을 빠짐없이 쓰세요."
+    elif 줄수 >= 3 or 글자수 >= 6000:
+        범위 = "3,500~5,000자"
+        덧붙임 = "재료에 있는 것만 쓰고, 모자라면 거기서 끝내세요."
+    else:
+        범위 = "2,000~3,000자"
+        덧붙임 = (
+            "재료가 얇습니다. 늘리지 마세요.\n"
+            "   숫자를 모르면 숫자를 쓰지 말고, 대신 **어디서 어떻게 확인하는지**를\n"
+            "   기관 이름·메뉴 이름·전화번호까지 구체적으로 쓰세요.\n"
+            "   알맹이 있는 2,000자가 두루뭉술한 8,000자보다 낫습니다.")
+    logging.info("재료 무게: 확인된 사실 %s줄 / %s자 → 분량 %s", 줄수, 글자수, 범위)
+    return f"5. HTML 본문은 {범위} 로 작성하세요.\n   {덧붙임}"
+
+
+def 자료사용규칙(research: "ResearchContext | None") -> str:
+    """확인된 사실을 '쓰라' 고 못박는 규칙.
+
+    기존 프롬프트에는 "확인되지 않은 사실은 추측하지 마세요" 만 있었다.
+    안 된다는 말만 있고 하라는 말이 없으면, 모델이 가장 안전하게
+    규칙을 지키는 방법은 아무것도 단정하지 않는 것이다. 그래서
+    "은행마다 다릅니다" 가 나온다. 지키라고 만든 규칙이 두루뭉술을
+    만들고 있었다. 반대쪽 추를 같이 달아 준다.
+    """
+    줄수, _ = 재료무게(research)
+    if 줄수 <= 0:
+        return (
+            "[자료 쓰는 법]\n"
+            "- 이번 글은 검색으로 확인된 숫자가 없습니다. 숫자를 지어내지 마세요.\n"
+            "- 대신 **독자가 직접 확인하는 길**을 글의 알맹이로 삼으세요.\n"
+            "  기관 이름 > 메뉴 이름 > 화면에서 무엇을 보면 되는지, 전화번호까지.\n"
+            "- '확인이 필요합니다' 로 문장을 끝내지 마세요. 그 뒤를 쓰는 것이 이 글의 일입니다.")
+    return (
+        "[자료 쓰는 법]\n"
+        f"- 아래 [확인된 사실] 에 값이 {줄수}줄 있습니다. **전부 본문에 쓰세요.**\n"
+        "- 기관·은행·상품은 실제 이름으로 쓰세요. '한 시중은행' 같은 표현은 실패입니다.\n"
+        "- 숫자는 기준일과 함께 쓰세요. (예: 2026년 9월 기준 연 3.52%)\n"
+        "- 비교 주제라면 이름 3개 이상을 표로 만드세요. 이름 없는 비교는 비교가 아닙니다.\n"
+        "- [확인 안 됨] 에 있는 것은 쓰지 마세요. 짐작으로 메우지도 마세요.\n"
+        "  그 항목은 '어디서 확인하는지' 로 바꿔 쓰세요.\n"
+        "- 출처 표시를 문장 끝에 각주처럼 달지 마세요. ([언론사][1]) 같은 표시는 금지입니다.\n"
+        "  출처가 필요하면 문장 안에 기관 이름을 쓰고, 링크는 <a> 로 다세요.")
+
+
 def build_user_prompt(
     keyword: str,
     category: str,
@@ -1462,6 +1640,8 @@ def build_user_prompt(
         return build_dream_user_prompt_v2(keyword, research, wordpress_longtails)
 
     link = research.link
+    분량지시문 = 분량지시(research)
+    자료규칙 = 자료사용규칙(research)
     content_intent = classify_content_intent(keyword, category, wordpress_longtails, research.snippets)
     content_rules = intent_article_rules(content_intent, keyword)
     longtail_block = longtail_prompt_block(wordpress_longtails)
@@ -1472,6 +1652,9 @@ def build_user_prompt(
 메인 키워드: {keyword}
 카테고리: {category}
 글 의도 분류: {content_intent}
+
+{자료규칙}
+
 주제별 필수/금지 규칙:
 {content_rules}
 최우선 기준:
@@ -1553,7 +1736,7 @@ def build_user_prompt(
 2. SEO 제목은 50자 내외로 작성하되, 포커스 키워드 "{keyword}"를 반드시 포함하고 검색 의도가 분명해야 합니다. 단, 뉴스 원문 제목을 그대로 복사하지 말고 검색형 블로그 제목으로 다시 작성하세요.
 3. 메타 디스크립션은 120~160자 정도로 작성하고, 첫 문장에 포커스 키워드 "{keyword}"를 반드시 포함하세요. 태그 8~12개도 함께 제안하세요.
 4. HTML 본문은 WordPress/Tistory에 바로 붙여넣을 수 있게 작성하세요.
-5. HTML 본문은 기존보다 훨씬 길게 7000~9000자 정도로 작성하세요.
+{분량지시문}
 6. 반드시 지킬 글 흐름:
    - HTML 본문은 반드시 <p>로 시작하세요. 메타 디스크립션은 별도 문장이므로, 첫 문단에서 메타의 문장이나 요약을 다시 반복하지 마세요. 첫 문단은 독자가 지금 알아야 할 배경·사실·쟁점 중 하나를 자연스럽게 설명하고 포커스 키워드 "{keyword}"를 포함
    - 기계적인 질문 목록 대신 자연스러운 설명형 문단 사용
@@ -1586,6 +1769,8 @@ def build_retry_user_prompt(
 ) -> str:
     research = research or build_research_context(keyword, category, source_link)
     link = research.link
+    분량지시문 = 분량지시(research)
+    자료규칙 = 자료사용규칙(research)
     content_intent = classify_content_intent(keyword, category, wordpress_longtails, research.snippets)
     content_rules = intent_article_rules(content_intent, keyword)
     longtail_block = longtail_prompt_block(wordpress_longtails)
@@ -1596,6 +1781,9 @@ def build_retry_user_prompt(
 메인 키워드: {keyword}
 카테고리: {category}
 글 의도 분류: {content_intent}
+
+{자료규칙}
+
 주제별 필수/금지 규칙:
 {content_rules}
 최우선 기준:
@@ -2575,7 +2763,14 @@ def run_pipeline(
                 mark_longtail_required(item)
                 continue
 
-            research = build_research_context(item.keyword, item.category, item.source_link)
+            research = build_research_context(
+                item.keyword,
+                item.category,
+                item.source_link,
+                client=openai_client,
+                model=model,
+                longtails=item.wordpress_longtails,
+            )
             content_intent = classify_content_intent(
                 item.keyword,
                 item.category,

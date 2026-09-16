@@ -43,6 +43,10 @@ def enabled_for(category: str) -> bool:
     값 = os.getenv("ARTICLE_V2_CATEGORIES", "").strip()
     if not 값:
         return False
+    # ARTICLE_V2_CATEGORIES=* 한 줄이면 모든 카테고리에 켠다.
+    # 카테고리 이름을 하나씩 적다가 빠뜨리는 일이 잦아서 넣었다.
+    if 값 in {"*", "전부", "모두", "all"}:
+        return True
     이름 = str(category or "").strip()
     return any(하나.strip() and 하나.strip() in 이름 for 하나 in 값.split(","))
 
