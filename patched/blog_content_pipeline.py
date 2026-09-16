@@ -47,6 +47,13 @@ except Exception as _v2오류:  # pragma: no cover
         "article_v2.py 가 없어 두 단계 글쓰기는 건너뜁니다: %s", _v2오류)
 
 try:
+    import 글쓰기규칙 as 글규칙
+except Exception as _규칙오류:  # pragma: no cover
+    글규칙 = None
+    logging.getLogger(__name__).info(
+        "글쓰기규칙.py 가 없어 손글 규칙은 건너뜁니다: %s", _규칙오류)
+
+try:
     import web_research
 except Exception as _검색오류:  # pragma: no cover
     web_research = None
@@ -1597,6 +1604,28 @@ def 분량지시(research: "ResearchContext | None") -> str:
     return f"5. HTML 본문은 {범위} 로 작성하세요.\n   {덧붙임}"
 
 
+# 규칙 시트를 읽으려면 스프레드시트 손잡이가 있어야 하는데,
+# 요청문 만드는 함수는 그걸 넘겨받지 않는다. 실행 시작에 한 번 넣어 둔다.
+_열린시트 = {"값": None}
+
+
+def 시트기억하기(spreadsheet) -> None:
+    _열린시트["값"] = spreadsheet
+
+
+def 손글규칙블록() -> str:
+    """손으로 쓰실 때와 같은 규칙 덩어리. 없으면 빈 글자."""
+    if 글규칙 is None:
+        return ""
+    if os.getenv("USE_HAND_WRITING_RULES", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return ""
+    try:
+        return 글규칙.요청문블록(_열린시트["값"])
+    except Exception as 오류:
+        logging.warning("글쓰기 규칙을 준비하지 못했습니다: %s", 오류)
+        return ""
+
+
 def 자료사용규칙(research: "ResearchContext | None") -> str:
     """확인된 사실을 '쓰라' 고 못박는 규칙.
 
@@ -1642,6 +1671,7 @@ def build_user_prompt(
     link = research.link
     분량지시문 = 분량지시(research)
     자료규칙 = 자료사용규칙(research)
+    손글규칙 = 손글규칙블록()
     content_intent = classify_content_intent(keyword, category, wordpress_longtails, research.snippets)
     content_rules = intent_article_rules(content_intent, keyword)
     longtail_block = longtail_prompt_block(wordpress_longtails)
@@ -1652,6 +1682,8 @@ def build_user_prompt(
 메인 키워드: {keyword}
 카테고리: {category}
 글 의도 분류: {content_intent}
+
+{손글규칙}
 
 {자료규칙}
 
@@ -1771,6 +1803,7 @@ def build_retry_user_prompt(
     link = research.link
     분량지시문 = 분량지시(research)
     자료규칙 = 자료사용규칙(research)
+    손글규칙 = 손글규칙블록()
     content_intent = classify_content_intent(keyword, category, wordpress_longtails, research.snippets)
     content_rules = intent_article_rules(content_intent, keyword)
     longtail_block = longtail_prompt_block(wordpress_longtails)
@@ -1781,6 +1814,8 @@ def build_retry_user_prompt(
 메인 키워드: {keyword}
 카테고리: {category}
 글 의도 분류: {content_intent}
+
+{손글규칙}
 
 {자료규칙}
 
@@ -2698,6 +2733,7 @@ def run_pipeline(
 ) -> None:
     sheet_client = gspread.service_account(filename=credentials_path)
     spreadsheet = sheet_client.open_by_key(spreadsheet_id)
+    시트기억하기(spreadsheet)          # 글쓰기규칙 시트를 읽기 위해
     today_sheet = ensure_today_sheet(spreadsheet)
     openai_client = OpenAI(api_key=openai_key)
     today_values = read_today_values_with_retry(today_sheet)
