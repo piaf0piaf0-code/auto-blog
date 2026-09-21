@@ -2076,16 +2076,69 @@ function 티스토리에있나(도메인, 제목) {
     }
   }
   var 원문 = RSS보관[도메인];
-  if (원문 === null || 원문 === undefined) return null;
 
-  var 항목들 = 원문.match(/<item[\s\S]*?<\/item>/g) || [];
-  for (var i = 0; i < 항목들.length; i++) {
-    var 제목m = /<title>([\s\S]*?)<\/title>/.exec(항목들[i]);
-    var 링크m = /<link>([\s\S]*?)<\/link>/.exec(항목들[i]);
-    if (!제목m) continue;
-    var 그제목 = 제목m[1].replace(/<!\[CDATA\[|\]\]>/g, '').trim();
-    if (제목같나(그제목, 제목)) {
-      return 링크m ? 링크m[1].replace(/<!\[CDATA\[|\]\]>/g, '').trim() : '';
+  // ① RSS 에서 찾아본다 (빠르다)
+  if (원문 !== null && 원문 !== undefined) {
+    var 항목들 = 원문.match(/<item[\s\S]*?<\/item>/g) || [];
+    훑은수[도메인] = 항목들.length;
+    for (var i = 0; i < 항목들.length; i++) {
+      var 제목m = /<title>([\s\S]*?)<\/title>/.exec(항목들[i]);
+      var 링크m = /<link>([\s\S]*?)<\/link>/.exec(항목들[i]);
+      if (!제목m) continue;
+      var 그제목 = 제목m[1].replace(/<!\[CDATA\[|\]\]>/g, '').trim();
+      if (제목같나(그제목, 제목)) {
+        return 링크m ? 링크m[1].replace(/<!\[CDATA\[|\]\]>/g, '').trim() : '';
+      }
+    }
+  }
+
+  // ② 없으면 sitemap 으로 다시 찾는다
+  //
+  //    티스토리 RSS 는 최근 글 몇 개만 담는다. 하루 7편씩 올리면
+  //    어제 글이 벌써 빠져 있다. 그래서 발행을 다 하셨는데도
+  //    '아직 안 보입니다' 가 나왔다. RSS 가 짧은 것이지 글이
+  //    없는 게 아니었다. sitemap.xml 은 글을 전부 담는다.
+  var 사이트맵것 = 사이트맵에있나(도메인, 제목);
+  if (사이트맵것 !== null) return 사이트맵것;
+
+  // ③ 둘 다 못 봤으면 '확인 실패' 로 돌려 원인을 알린다
+  if (원문 === null || 원문 === undefined) return null;
+  return '';
+}
+
+/** 이번 확인에서 도메인별로 글을 몇 개나 훑었는지. 안내문에 쓴다. */
+var 훑은수 = {};
+
+/**
+ * sitemap.xml 로 글을 찾는다.
+ *
+ * finwiz.gs 의 finwiz티스토리목록() 이 이미 이 일을 한다. 같은 프로젝트라
+ * 그대로 부를 수 있다. 그 파일이 없으면 조용히 건너뛴다.
+ *
+ * 돌려주는 값
+ *   문자열  찾았다 (글 주소)
+ *   ''      목록은 받았는데 그 제목이 없다
+ *   null    목록 자체를 못 받았다
+ */
+function 사이트맵에있나(도메인, 제목) {
+  if (typeof finwiz티스토리목록 !== 'function') return null;
+  var 목록;
+  try {
+    목록 = finwiz티스토리목록(도메인);
+  } catch (오류) {
+    return null;
+  }
+  if (!목록 || !목록.글들 || !목록.글들.length) {
+    if (목록 && 목록.실패) 확인실패이유[도메인] = 'sitemap — ' + 목록.실패;
+    return null;
+  }
+
+  훑은수[도메인] = Math.max(훑은수[도메인] || 0, 목록.글들.length);
+  for (var i = 0; i < 목록.글들.length; i++) {
+    var 하나 = 목록.글들[i];
+    var 후보들 = 하나.후보 && 하나.후보.length ? 하나.후보 : [하나.제목];
+    for (var k = 0; k < 후보들.length; k++) {
+      if (제목같나(후보들[k], 제목)) return 하나.URL;
     }
   }
   return '';
@@ -2132,6 +2185,8 @@ function 완료탭에넣기(완료탭, 원본헤더, 원본값) {
 function 발행확인() {
   RSS보관 = {};
   확인실패이유 = {};
+  훑은수 = {};
+  if (typeof finwiz목록보관 !== 'undefined') finwiz목록보관 = {};
   var 준비 = 시트준비();
   var 탭 = 준비.탭, 열 = 준비.열, 헤더 = 준비.헤더;
   var 마지막행 = 탭.getLastRow();
@@ -2167,6 +2222,12 @@ function 발행확인() {
       return;
     }
 
+    // 임시저장만 한 글은 주소가 없는데, 예전 파이썬이 편집기 주소를
+    // '대표 링크/결과 URL' 칸에 덧붙여 놨다.
+    //     https://finwiz.tistory.com/manage/newpost/#
+    // 글 주소가 아니라 편집기 주소다. 이 줄만 걷어낸다. 원래 출처는 둔다.
+    편집기주소치우기(탭, 행번호, 열, 행);
+
     var 확인못함 = [], 아직 = [], wp주소 = '', ts주소 = '';
 
     if (정보.워드프레스) {
@@ -2196,8 +2257,16 @@ function 발행확인() {
       return;
     }
     if (아직.length) {
+      // 몇 개를 훑고도 못 찾았는지 같이 알린다. 이것이 없으면
+      // '아직 안 보입니다' 가 글이 없다는 뜻인지, 제목이 안 맞는다는
+      // 뜻인지 구분할 수가 없다.
+      var 훑음 = 아직.map(function (곳) {
+        var 도메인 = (곳 === '워드프레스') ? 정보.워드프레스 : 정보.티스토리;
+        var 수 = 훑은수[도메인] || 0;
+        return 곳 + '(글 ' + 수 + '개 훑음)';
+      }).join('·');
       결과.push({ 행번호: 행번호, 키워드: 키워드, 판정: '아직',
-                  설명: 아직.join('·') + ' 에서 아직 안 보입니다' });
+                  설명: 훑음 + ' 에서 같은 제목을 못 찾았습니다' });
       return;
     }
 
@@ -2282,4 +2351,33 @@ function 글쓰기규칙내보내기() {
     '이제 자동 글도 손으로 쓰실 때와 같은 규칙을 씁니다.\n' +
     '규칙을 고치시면 이 버튼을 다시 눌러 주세요.\n' +
     '(시트에서 바로 고치셔도 됩니다.)');
+}
+
+
+/**
+ * '대표 링크/결과 URL' 칸에 섞여 들어간 편집기 주소를 지운다.
+ *
+ * 티스토리 임시저장만 한 글은 공개 주소가 없다. 그런데 예전 파이썬은
+ * 그때 열려 있던 편집기 주소(.../manage/newpost/#)를 결과 주소로 적었다.
+ * 열어도 그 글이 안 나오고, 다음 글의 내부 링크로도 못 쓴다.
+ *
+ * 여러 줄이 들어 있을 수 있으니 그 줄만 빼고 나머지는 그대로 둔다.
+ */
+function 편집기주소치우기(탭, 행번호, 열, 행) {
+  if (열.source === -1) return false;
+  var 원래 = String(행[열.source] || '');
+  if (원래.indexOf('/manage/') === -1) return false;
+
+  var 남길것 = 원래.split(/[\r\n]+/).filter(function (줄) {
+    var t = 줄.trim();
+    if (!t) return false;
+    return t.indexOf('/manage/newpost') === -1 &&
+           t.indexOf('/manage/post') === -1 &&
+           t.indexOf('/manage/entry') === -1;
+  });
+  var 새값 = 남길것.join('\n');
+  if (새값 === 원래) return false;
+  탭.getRange(행번호, 열.source + 1).setValue(새값);
+  행[열.source] = 새값;
+  return true;
 }

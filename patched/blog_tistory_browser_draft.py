@@ -1617,6 +1617,53 @@ def click_draft_save(page: Any) -> None:
     raise RuntimeError("티스토리 임시저장 버튼을 찾지 못했습니다.")
 
 
+# ══════════════════════════════════════════════════════════
+#  임시저장 상태에서는 글 주소가 없다
+#
+#  예전에는 link=page.url 을 그대로 넘겼다. 임시저장만 한 상태면
+#  그 주소는 편집기 주소다.
+#
+#      https://finwiz.tistory.com/manage/newpost/#
+#
+#  이게 시트의 '대표 링크/결과 URL' 칸에 들어갔다. 글 주소가 아니라
+#  편집기 주소다. 열어도 그 글이 안 나오고, 다음 글의 내부 링크로도
+#  쓸 수 없고, 링크관리에도 쓸모가 없었다.
+#
+#  틀린 주소를 적느니 비워 두는 편이 낫다. 실제 발행 뒤에는
+#  시트 메뉴의 '🔎 발행됐는지 확인' 이 진짜 주소를 채워 준다.
+# ══════════════════════════════════════════════════════════
+
+편집기주소표시 = ("/manage/newpost", "/manage/post", "/manage/entry", "#")
+
+
+def 글주소인가(주소: str) -> bool:
+    """티스토리 글 주소인가. 글 주소는 끝이 숫자다."""
+    주소 = str(주소 or "").strip()
+    if not 주소.startswith(("http://", "https://")):
+        return False
+    if any(표시 in 주소 for 표시 in 편집기주소표시[:-1]):
+        return False
+    바탕 = 주소.split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    마지막 = 바탕.rsplit("/", 1)[-1]
+    return 마지막.isdigit()
+
+
+def 발행주소(page: Any) -> str:
+    """공개 발행됐을 때만 글 주소를 돌려준다. 아니면 빈 글자."""
+    try:
+        지금주소 = str(page.url or "")
+    except Exception:
+        return ""
+    if 글주소인가(지금주소):
+        return 지금주소
+    logging.info(
+        "임시저장 상태라 글 주소가 아직 없습니다. 시트에는 비워 둡니다.\n"
+        "  (편집기 주소: %s)\n"
+        "  발행하신 뒤 시트에서 '🔎 발행됐는지 확인' 을 누르면 주소가 채워집니다.",
+        지금주소 or "(모름)")
+    return ""
+
+
 def record_tistory_completion(spreadsheet, item: DraftItem, result: DraftResult) -> bool:
     """티스토리에 올린 글을 카테고리별 완료시트에 한 줄 남긴다.
 
@@ -1727,7 +1774,7 @@ def save_tistory_draft_with_browser(
         else:
             logging.warning("자동 발행에 실패했습니다. 임시저장 상태로 남습니다.")
 
-    return DraftResult(post_id="", link=page.url, status=상태, platform="TistoryBrowser")
+    return DraftResult(post_id="", link=발행주소(page), status=상태, platform="TistoryBrowser")
 
 
 # 브라우저가 죽었을 때 나오는 말들. 이 경우 남은 글을 계속 시도해 봐야
