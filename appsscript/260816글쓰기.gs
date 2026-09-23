@@ -173,6 +173,14 @@ function onOpen() {
     메뉴.addItem('📋 finwiz 블로그 글목록 보기', 'finwiz블로그목록쓰기메뉴');
     메뉴.addItem('🧾 finwiz 사실카드 점검', 'finwiz카드점검메뉴');
   }
+
+  // 서치콘솔 성적표는 서치콘솔.gs 가 있을 때만 메뉴에 나온다
+  if (typeof 서치콘솔받기메뉴 === 'function') {
+    메뉴.addSeparator();
+    메뉴.addItem('📊 서치콘솔 성적표 받기', '서치콘솔받기메뉴');
+    메뉴.addItem('⏰ 성적표 매일 아침 자동으로', '서치콘솔매일켜기');
+    메뉴.addItem('⏹ 자동 받기 끄기', '서치콘솔매일끄기');
+  }
   메뉴.addToUi();
 }
 
