@@ -2795,7 +2795,11 @@ def run_pipeline(
         logging.info("글 생성 시작: [%s] %s", item.category, item.keyword)
         try:
             if len(split_longtail_keywords(item.wordpress_longtails, 3)) < 3:
-                logging.warning("롱테일 키워드가 부족해 글쓰기를 건너뜁니다: %s", item.keyword)
+                logging.warning(
+                    "롱테일 키워드가 3개가 안 돼 글쓰기를 건너뜁니다: %s\n"
+                    "  시트 메뉴의 '🔎 롱테일 자동 채우기' 를 누르면 구글 자동완성에서\n"
+                    "  실제 검색어를 가져와 채워 줍니다. 그다음 다시 돌리시면 됩니다.",
+                    item.keyword)
                 mark_longtail_required(item)
                 continue
 
