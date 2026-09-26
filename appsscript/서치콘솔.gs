@@ -130,6 +130,33 @@ function SC덮나(사이트, 호스트) {
   return SC호스트(사이트) === 호스트;
 }
 
+/**
+ * 이 블로그에 쓸 서치콘솔 속성 하나를 고른다.
+ *
+ * 한 블로그를 속성 여러 개가 덮을 수 있다(도메인 속성 + 주소 속성,
+ * http 와 https). 주소 속성은 앞머리까지 맞아야 쓸 수 있다.
+ * 'http://seaga.seaga.co.kr/' 로는 https 글을 검사할 수 없다.
+ * 그래서 ① 도메인 속성 ② https 주소 속성 ③ 나머지 순으로 고른다.
+ * 예전엔 호스트만 비교해 목록의 첫 번째를 썼고, 한 블로그의 색인
+ * 검사가 20편 모두 실패했다.
+ */
+function SC속성고르기(사이트들, 호스트, 표본주소) {
+  var 맞는것 = 사이트들.filter(function (s) { return SC덮나(s, 호스트); });
+  if (표본주소) {
+    맞는것 = 맞는것.filter(function (s) {
+      return s.indexOf('sc-domain:') === 0 ||
+             String(표본주소).toLowerCase().replace('://www.', '://').indexOf(s.toLowerCase().replace('://www.', '://')) === 0;
+    });
+  }
+  function 점수(s) {
+    if (s.indexOf('sc-domain:') === 0) return 0;
+    if (/^https:\/\//i.test(s)) return 1;
+    return 2;
+  }
+  맞는것.sort(function (가, 나) { return 점수(가) - 점수(나); });
+  return 맞는것[0] || '';
+}
+
 /** 카테고리표에 적힌 내 블로그 주소들 */
 function SC내블로그() {
   var 모음 = {};

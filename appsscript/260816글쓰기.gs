@@ -186,6 +186,9 @@ function onOpen() {
   if (typeof 블로그진단메뉴 === 'function') {
     메뉴.addItem('🩺 블로그 전체 진단', '블로그진단메뉴');
   }
+  if (typeof 사이트맵점검메뉴 === 'function') {
+    메뉴.addItem('🗺 사이트맵 점검·제출', '사이트맵점검메뉴');
+  }
   // 트렌드 건지기는 트렌드.gs 가 있을 때만 나온다
   if (typeof 트렌드받기메뉴 === 'function') {
     메뉴.addItem('🔥 트렌드에서 건지기', '트렌드받기메뉴');
