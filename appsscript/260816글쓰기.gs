@@ -183,6 +183,9 @@ function onOpen() {
     메뉴.addSeparator();
     메뉴.addItem('📊 서치콘솔 성적표 받기', '서치콘솔받기메뉴');
   }
+  if (typeof 블로그진단메뉴 === 'function') {
+    메뉴.addItem('🩺 블로그 전체 진단', '블로그진단메뉴');
+  }
   // 트렌드 건지기는 트렌드.gs 가 있을 때만 나온다
   if (typeof 트렌드받기메뉴 === 'function') {
     메뉴.addItem('🔥 트렌드에서 건지기', '트렌드받기메뉴');

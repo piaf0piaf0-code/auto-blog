@@ -163,7 +163,7 @@ function SC사이트맵글수(호스트) {
   return '';
 }
 
-function SC사이트맵세기(주소, 티스토리, 깊이) {
+function SC사이트맵세기(주소, 티스토리, 깊이, 모음) {
   if (깊이 > 2) return 0;
   var 원문 = '';
   try {
@@ -181,17 +181,29 @@ function SC사이트맵세기(주소, 티스토리, 깊이) {
     주소들.forEach(function (자식) {
       // 워드프레스는 글 사이트맵만 센다. 페이지·카테고리·태그·작성자는 뺀다.
       if (!티스토리 && !/post-sitemap|posts-post/i.test(자식)) return;
-      합 += SC사이트맵세기(자식, 티스토리, 깊이 + 1);
+      합 += SC사이트맵세기(자식, 티스토리, 깊이 + 1, 모음);
     });
     return 합;
   }
 
-  if (티스토리) {
-    return 주소들.filter(function (하나) {
-      return /\/\d+\/?$/.test(하나) || /\/entry\//.test(하나);
-    }).length;
+  var 글주소 = 티스토리
+    ? 주소들.filter(function (하나) { return /\/\d+\/?$/.test(하나) || /\/entry\//.test(하나); })
+    : 주소들;
+  if (모음) 글주소.forEach(function (하나) { 모음.push(하나); });
+  return 글주소.length;
+}
+
+/** 사이트맵의 글 주소 목록 (색인 검사 표본을 뽑을 때 쓴다) */
+function SC사이트맵주소들(호스트) {
+  var 티스토리 = /tistory\.com$/.test(호스트);
+  var 후보 = 티스토리
+    ? ['/sitemap.xml']
+    : ['/sitemap_index.xml', '/wp-sitemap.xml', '/sitemap.xml'];
+  for (var i = 0; i < 후보.length; i++) {
+    var 모음 = [];
+    if (SC사이트맵세기('https://' + 호스트 + 후보[i], 티스토리, 0, 모음) > 0) return 모음;
   }
-  return 주소들.length;
+  return [];
 }
 
 
