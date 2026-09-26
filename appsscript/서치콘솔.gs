@@ -680,6 +680,28 @@ function SC기록남기기(블로그, 날짜) {
 }
 
 
+// ── 결과를 보여 주는 창 ─────────────────────────────────
+//
+//  알림창(alert)은 회원님이 '확인' 을 누를 때까지 스크립트를 붙잡는다.
+//  그 시간까지 실행 시간으로 세서, 결과를 몇 분 읽고 있으면 위에
+//  '최대 실행 시간 초과' 가 떴다(결과는 이미 저장됐는데도). 실제로 그랬다.
+//  그래서 결과는 스크립트를 붙잡지 않는 창으로 띄운다.
+
+function 결과창(제목, 글) {
+  var 안전 = String(글 || '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  try {
+    var 화면 = HtmlService.createHtmlOutput(
+      '<div style="font:14px/1.6 system-ui,-apple-system,\'Malgun Gothic\',sans-serif;' +
+      'white-space:pre-wrap;word-break:keep-all;padding:4px 2px">' + 안전 + '</div>')
+      .setWidth(560).setHeight(640);
+    SpreadsheetApp.getUi().showModelessDialog(화면, 제목);
+  } catch (e) {
+    SpreadsheetApp.getUi().alert(글);   // 창을 못 띄우면 예전처럼 알림창
+  }
+}
+
+
 // ── 메뉴 ────────────────────────────────────────────────
 
 function 서치콘솔받기메뉴() {
@@ -691,7 +713,7 @@ function 서치콘솔받기메뉴() {
     화면.alert(SC오류설명(오류));
     return;
   }
-  화면.alert(SC요약글(결과));
+  결과창('서치콘솔 성적표', SC요약글(결과));
 }
 
 function SC오류설명(오류) {
@@ -760,6 +782,14 @@ function SC요약글(결과) {
             ' · 검색에 나온 글 ' + 글 +
             (칸.다른길 ? '\n    + ' + 칸.다른길 : ''));
   });
+
+  var 다른합 = 0, 다른있는곳 = [];
+  결과.블로그.forEach(function (칸) {
+    if (칸.다른클릭) { 다른합 += 칸.다른클릭; 다른있는곳.push(칸.호스트 + ' ' + 칸.다른클릭); }
+  });
+  줄.push('');
+  줄.push('디스커버·구글 뉴스로 들어온 클릭 (28일): ' + 다른합 +
+          (다른있는곳.length ? '  —  ' + 다른있는곳.join(', ') : '  (모든 블로그 0)'));
 
   var 빠짐 = 결과.블로그.filter(function (칸) { return !칸.등록; });
   if (빠짐.length) {
