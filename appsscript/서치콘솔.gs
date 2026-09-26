@@ -93,14 +93,14 @@ function SC날짜() {
 }
 
 /** 검색 성과 조회. 2만5천 줄이 넘으면 이어서 받는다. */
-function SC조회(사이트, 차원, 날짜) {
+function SC조회(사이트, 차원, 날짜, 종류) {
   var 모음 = [];
   for (var 쪽 = 0; 쪽 < 4; 쪽++) {
     var 답 = SC요청('sites/' + encodeURIComponent(사이트) + '/searchAnalytics/query', {
       startDate: 날짜.시작,
       endDate: 날짜.끝,
       dimensions: 차원,
-      type: 'web',
+      type: 종류 || 'web',
       rowLimit: 25000,
       startRow: 쪽 * 25000
     });
@@ -109,6 +109,76 @@ function SC조회(사이트, 차원, 날짜) {
     if (받은것.length < 25000) break;
   }
   return 모음;
+}
+
+
+// ── 일반 검색 말고 들어오는 길 ─────────────────────────
+//
+//  처음 판은 구글 '일반 검색(web)' 만 셌다. 그런데 방문자는
+//    디스커버   크롬·구글앱 첫 화면의 추천 기사
+//    구글 뉴스  news.google.com 과 뉴스 앱
+//    뉴스 탭    구글 검색의 '뉴스' 탭
+//  으로도 온다. 뉴스·건강 해설 블로그는 디스커버가 일반 검색보다
+//  훨씬 클 수 있다. 이걸 빼고 '클릭 0' 으로 판정하면 틀린다
+//  (saega2.seaga.co.kr 을 두고 회원님이 짚어 주신 것).
+//  네이버·다음·직접 방문은 서치콘솔로는 볼 수 없다.
+
+var SC다른길 = [
+  { 종류: 'discover', 이름: '디스커버' },
+  { 종류: 'googleNews', 이름: '구글 뉴스' },
+  { 종류: 'news', 이름: '뉴스 탭' }
+];
+
+/**
+ * 속성마다 다른 길의 글별 클릭을 한 번에(fetchAll) 받아 블로그별로 합친다.
+ * 돌려주는 값: { 호스트: { 합: {클릭, 노출}, 길: {디스커버: {클릭, 노출}, ...}, 글: {열쇠: true} } }
+ */
+function SC다른길합계(사이트들, 날짜) {
+  var 요청 = [], 짝 = [];
+  사이트들.forEach(function (사이트) {
+    SC다른길.forEach(function (길) {
+      요청.push({
+        url: SC주소 + 'sites/' + encodeURIComponent(사이트) + '/searchAnalytics/query',
+        method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+        headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+        payload: JSON.stringify({ startDate: 날짜.시작, endDate: 날짜.끝, dimensions: ['page'],
+                                  type: 길.종류, rowLimit: 25000 })
+      });
+      짝.push(길);
+    });
+  });
+  var 답들 = [];
+  try { 답들 = 요청.length ? UrlFetchApp.fetchAll(요청) : []; } catch (e) { 답들 = []; }
+
+  var 합 = {}, 본 = {};
+  답들.forEach(function (답, i) {
+    var 몸 = null;
+    try { if (답.getResponseCode() === 200) 몸 = JSON.parse(답.getContentText()); } catch (e) { 몸 = null; }
+    if (!몸 || !몸.rows) return;
+    var 길 = 짝[i];
+    몸.rows.forEach(function (줄) {
+      var 주소 = 줄.keys[0];
+      var 겹침 = 길.종류 + '\t' + 주소;   // 도메인 속성과 주소 속성이 같은 글을 덮을 때 한 번만
+      if (본[겹침]) return;
+      본[겹침] = true;
+      var 호스트 = SC호스트(주소);
+      var 칸 = 합[호스트] || (합[호스트] = { 합: { 클릭: 0, 노출: 0 }, 길: {}, 글: {} });
+      var 길칸 = 칸.길[길.이름] || (칸.길[길.이름] = { 클릭: 0, 노출: 0 });
+      길칸.클릭 += 줄.clicks || 0; 길칸.노출 += 줄.impressions || 0;
+      칸.합.클릭 += 줄.clicks || 0; 칸.합.노출 += 줄.impressions || 0;
+      if ((줄.impressions || 0) > 0) 칸.글[String(주소).toLowerCase().replace(/^https?:\/\/(www\.)?/, '').replace(/[?#].*$/, '').replace(/\/+$/, '')] = true;
+    });
+  });
+  return 합;
+}
+
+/** '디스커버 120 · 구글 뉴스 5' 처럼 짧게 */
+function SC다른길글(칸) {
+  if (!칸 || !칸.길) return '';
+  return SC다른길.map(function (길) {
+    var 값 = 칸.길[길.이름];
+    return 값 && (값.클릭 || 값.노출) ? 길.이름 + ' ' + 값.클릭 : '';
+  }).filter(String).join(' · ');
 }
 
 
@@ -297,6 +367,24 @@ function SC받기본체() {
   });
 
   var 블로그 = SC블로그별(글별, 사이트들);
+  var 다른길 = {};
+  try { 다른길 = SC다른길합계(사이트들, 날짜); } catch (e) { 다른길 = {}; }
+  블로그.forEach(function (칸) {
+    var d = 다른길[칸.호스트];
+    칸.다른클릭 = d ? d.합.클릭 : 0;
+    칸.다른길 = SC다른길글(d);
+  });
+  // 일반 검색엔 없고 디스커버·뉴스로만 오는 블로그도 목록에 넣는다
+  Object.keys(다른길).forEach(function (h) {
+    if (블로그.some(function (칸) { return 칸.호스트 === h; })) return;
+    블로그.push({ 호스트: h, 클릭: 0, 노출: 0, 순위곱: 0, 노출글: 0, 평균순위: 0, 전체글: SC사이트맵글수(h),
+                  안나온비율: '', 등록: true, 다른클릭: 다른길[h].합.클릭, 다른길: SC다른길글(다른길[h]),
+                  진단: '' });
+  });
+  블로그.forEach(function (칸) {
+    if (칸.다른클릭 > 0 && !칸.클릭) 칸.진단 = '일반 검색은 0 이지만 ' + 칸.다른길 + ' 로 방문자가 옴 — 정리하지 마세요.';
+  });
+  블로그.sort(function (가, 나) { return (나.클릭 + 나.다른클릭) - (가.클릭 + 가.다른클릭) || 나.노출 - 가.노출; });
   var 싸움 = SC싸움목록(질의줄);
   var 할일 = SC할일목록(글별, 질의줄, SC약한글표(싸움));
 
@@ -517,14 +605,16 @@ function SC퍼센트(값) {
 function SC블로그탭쓰기(블로그, 날짜) {
   var 탭 = SC탭쓰기(SC탭.블로그,
     ['블로그', '서치콘솔', '클릭', '노출', 'CTR', '평균순위',
-     '노출된 글', '전체 글(사이트맵)', '한 번도 안 나온 글', '한 줄 진단'],
+     '노출된 글', '전체 글(사이트맵)', '한 번도 안 나온 글', '한 줄 진단',
+     '디스커버·뉴스 클릭'],
     블로그.map(function (칸) {
       return [
         칸.호스트, 칸.등록 ? '등록됨' : '없음',
         칸.클릭, 칸.노출,
         칸.노출 ? SC퍼센트(칸.클릭 / 칸.노출) : '',
         칸.노출 ? Math.round(칸.평균순위 * 10) / 10 : '',
-        칸.노출글, 칸.전체글, SC퍼센트(칸.안나온비율), 칸.진단
+        칸.노출글, 칸.전체글, SC퍼센트(칸.안나온비율), 칸.진단,
+        칸.다른길 || ''
       ];
     }));
   try { 탭.getRange(1, 1).setNote('기간: ' + 날짜.시작 + ' ~ ' + 날짜.끝 + ' (' + SC기간일수 + '일)'); } catch (e) { }
@@ -667,7 +757,8 @@ function SC요약글(결과) {
     줄.push('• ' + 칸.호스트);
     줄.push('    클릭 ' + 칸.클릭 + ' · 노출 ' + 칸.노출 +
             (칸.노출 ? ' · 평균 ' + (Math.round(칸.평균순위 * 10) / 10) + '위' : '') +
-            ' · 검색에 나온 글 ' + 글);
+            ' · 검색에 나온 글 ' + 글 +
+            (칸.다른길 ? '\n    + ' + 칸.다른길 : ''));
   });
 
   var 빠짐 = 결과.블로그.filter(function (칸) { return !칸.등록; });
