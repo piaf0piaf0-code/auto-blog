@@ -600,7 +600,9 @@ function 서치콘솔매일켜기() {
   });
   ScriptApp.newTrigger(SC매일함수).timeBased().everyDays(1).atHour(7).create();
   SpreadsheetApp.getUi().alert(
-    '매일 아침 7시쯤 서치콘솔 성적표를 자동으로 받습니다.\n\n' +
+    '매일 아침 7시쯤 서치콘솔 성적표를 자동으로 받습니다.\n' +
+    (typeof 트렌드받기 === 'function' ? '같은 때 구글 트렌드에서 우리 분야 검색어도 건져 TR_후보 탭에 올립니다.\n' : '') +
+    '\n' +
     'PC 가 꺼져 있어도 구글 서버에서 돕니다.\n' +
     'SC_기록 탭에 날마다 한 줄씩 쌓여 추세를 볼 수 있습니다.');
 }
@@ -619,5 +621,13 @@ function 서치콘솔매일실행() {
     서치콘솔받기();
   } catch (오류) {
     console.error('서치콘솔 매일 받기 실패: ' + 오류);
+  }
+  // 트렌드.gs 가 있으면 같은 아침에 트렌드도 건진다. 하나가 실패해도 다른 하나는 돈다.
+  if (typeof 트렌드받기 === 'function') {
+    try {
+      트렌드받기();
+    } catch (오류) {
+      console.error('트렌드 매일 받기 실패: ' + 오류);
+    }
   }
 }
