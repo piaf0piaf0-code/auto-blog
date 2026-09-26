@@ -540,6 +540,21 @@ function 서치콘솔받기메뉴() {
 
 function SC오류설명(오류) {
   var 말 = String(오류 && 오류.message || 오류);
+
+  // API 가 꺼져 있는 경우. 이것도 403 으로 오지만 권한 문제가 아니다.
+  // 권한 안내를 보여 주면 엉뚱한 곳을 고치게 된다(실제로 그랬다).
+  if (/has not been used in project|is disabled|SERVICE_DISABLED|accessNotConfigured/i.test(말)) {
+    var 주소 = (/https:\/\/console\.(?:developers|cloud)\.google\.com\/[^\s)"]+/.exec(말) || [])[0] || '';
+    var 링크칸 = SC링크남기기(주소);
+    return '권한은 됐습니다. 구글 쪽 스위치 하나만 켜면 됩니다.\n\n' +
+      '서치콘솔 API 가 이 스크립트 프로젝트에서 꺼져 있습니다.\n\n' +
+      '① ' + (링크칸 ? "'" + 링크칸 + "' 탭 A2 칸의 링크를 누르세요" : '아래 주소를 여세요') + '\n' +
+      '   (이 시트와 같은 구글 계정으로)\n' +
+      "② 파란 '사용' 버튼\n" +
+      '③ 3~5분 기다린 뒤 이 메뉴를 다시 누르기' +
+      (링크칸 ? '' : '\n\n' + 주소);
+  }
+
   if (/insufficient|scope|권한|403|401/i.test(말)) {
     return '서치콘솔을 읽을 권한이 없습니다.\n\n' +
       '① appsscript.json 에 webmasters.readonly 줄을 넣으셨는지\n' +
@@ -548,6 +563,23 @@ function SC오류설명(오류) {
       '확인해 주세요.\n\n(원래 메시지: ' + 말 + ')';
   }
   return '서치콘솔 성적표를 받다가 문제가 생겼습니다.\n\n' + 말;
+}
+
+/**
+ * 알림창의 긴 주소는 옆으로 잘려 안 보인다(실제로 그랬다).
+ * 누를 수 있게 시트 칸에 적어 둔다.
+ */
+function SC링크남기기(주소) {
+  if (!주소) return '';
+  try {
+    var 문서 = SpreadsheetApp.getActive();
+    var 탭 = 문서.getSheetByName(SC탭.블로그) || 문서.insertSheet(SC탭.블로그);
+    탭.clear();
+    탭.getRange(1, 1, 2, 1).setValues([['서치콘솔 API 켜기 — 아래 링크를 누르고 사용 버튼'], [주소]]);
+    return SC탭.블로그;
+  } catch (e) {
+    return '';
+  }
 }
 
 function SC요약글(결과) {
