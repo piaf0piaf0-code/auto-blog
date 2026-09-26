@@ -380,10 +380,11 @@ var TR머리 = ['받은 날', '검색어', '출처', '검색량', '카테고리'
 var TR체크열 = 9, TR옮긴날열 = 10;   // 1부터 센 열 번호
 
 function TR탭가져오기() {
-  var 문서 = SpreadsheetApp.getActive();
-  var 탭 = 문서.getSheetByName(TR탭);
-  if (!탭) {
-    탭 = 문서.insertSheet(TR탭);
+  var 얻음 = (typeof SC탭얻기 === 'function')
+    ? SC탭얻기(TR탭)
+    : { 탭: SpreadsheetApp.getActive().getSheetByName(TR탭) || SpreadsheetApp.getActive().insertSheet(TR탭), 새로: true };
+  var 탭 = 얻음.탭;
+  if (얻음.새로 || 탭.getLastRow() === 0) {
     탭.getRange(1, 1, 1, TR머리.length).setValues([TR머리]);
     탭.getRange(1, 1, 1, TR머리.length).setFontWeight('bold').setBackground('#e8eaed');
     탭.setFrozenRows(1);

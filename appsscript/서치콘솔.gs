@@ -202,6 +202,21 @@ function SC사이트맵세기(주소, 티스토리, 깊이) {
  * 매일 자동 실행에서도 부르므로 여기서는 화면(알림창)을 쓰지 않는다.
  */
 function 서치콘솔받기() {
+  // 메뉴를 연달아 누르거나 매일 7시 실행과 겹치면 두 실행이 같은 탭을
+  // 동시에 만들다 부딪힌다('SC_글별 시트가 이미 있습니다'). 실제로 그랬다.
+  var 잠금 = null;
+  try { 잠금 = LockService.getScriptLock(); } catch (e) { 잠금 = null; }
+  if (잠금 && !잠금.tryLock(2000)) {
+    throw new Error('이미 성적표를 받는 중입니다. 1분쯤 뒤 끝나면 결과가 보입니다.');
+  }
+  try {
+    return SC받기본체();
+  } finally {
+    if (잠금) { try { 잠금.releaseLock(); } catch (e) { } }
+  }
+}
+
+function SC받기본체() {
   var 날짜 = SC날짜();
   var 사이트들 = SC사이트목록();
   var 실패 = [];
@@ -428,9 +443,22 @@ function SC약한글표(싸움) {
 
 // ── 탭 쓰기 ─────────────────────────────────────────────
 
-function SC탭쓰기(이름, 머리, 줄들) {
+/** 탭을 가져오거나 만든다. 그 사이 다른 실행이 만들었으면 그것을 쓴다. */
+function SC탭얻기(이름) {
   var 문서 = SpreadsheetApp.getActive();
-  var 탭 = 문서.getSheetByName(이름) || 문서.insertSheet(이름);
+  var 탭 = 문서.getSheetByName(이름);
+  if (탭) return { 탭: 탭, 새로: false };
+  try {
+    return { 탭: 문서.insertSheet(이름), 새로: true };
+  } catch (오류) {
+    탭 = 문서.getSheetByName(이름);
+    if (탭) return { 탭: 탭, 새로: false };
+    throw 오류;
+  }
+}
+
+function SC탭쓰기(이름, 머리, 줄들) {
+  var 탭 = SC탭얻기(이름).탭;
   탭.clear();
   var 모두 = [머리].concat(줄들.map(function (줄) {
     var 한줄 = 줄.slice(0, 머리.length);
@@ -496,11 +524,10 @@ function SC글별탭쓰기(글별) {
 
 /** 날마다 한 줄씩 쌓는다. 같은 날짜·블로그는 두 번 적지 않는다. */
 function SC기록남기기(블로그, 날짜) {
-  var 문서 = SpreadsheetApp.getActive();
-  var 탭 = 문서.getSheetByName(SC탭.기록);
+  var 얻음 = SC탭얻기(SC탭.기록);
+  var 탭 = 얻음.탭;
   var 머리 = ['기준일', '블로그', '클릭', '노출', '평균순위', '노출된 글', '전체 글'];
-  if (!탭) {
-    탭 = 문서.insertSheet(SC탭.기록);
+  if (얻음.새로 || 탭.getLastRow() === 0) {
     탭.getRange(1, 1, 1, 머리.length).setValues([머리]);
     탭.getRange(1, 1, 1, 머리.length).setFontWeight('bold').setBackground('#e8eaed');
     탭.setFrozenRows(1);
@@ -575,8 +602,7 @@ function SC오류설명(오류) {
 function SC링크남기기(주소) {
   if (!주소) return '';
   try {
-    var 문서 = SpreadsheetApp.getActive();
-    var 탭 = 문서.getSheetByName(SC탭.블로그) || 문서.insertSheet(SC탭.블로그);
+    var 탭 = SC탭얻기(SC탭.블로그).탭;
     탭.clear();
     탭.getRange(1, 1, 2, 1).setValues([['서치콘솔 API 켜기 — 아래 링크를 누르고 사용 버튼'], [주소]]);
     return SC탭.블로그;
